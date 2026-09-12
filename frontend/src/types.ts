@@ -8,7 +8,9 @@ export interface RoadPrediction {
   forecast_horizon_min: number;
   predicted_depth_cm: number;
   flood_probability_pct: number;
+  risk_score_norm: number;
   risk_score: number;
+  risk_level: 'Low' | 'Medium' | 'High' | 'Critical';
   risk_category: 'SAFE' | 'WATCH' | 'MODERATE' | 'HIGH' | 'CRITICAL';
   color: string;
   time_to_flood_min: number | null;
@@ -18,6 +20,8 @@ export interface RoadPrediction {
   confidence_pct: number;
   is_closed: boolean;
   explainability: Record<string, number>;
+  top_factor: string;
+  plain_reason: string;
 }
 
 export interface DrainagePipe {
@@ -84,7 +88,7 @@ export interface FloodPredictResponse {
   drainage: DrainageSimulation;
   kpis: KPIs;
   roads: RoadPrediction[];
-  timeline_projections: Record<string, { horizon_min: number; depth_cm: number; risk_score: number; risk_category: string }[]>;
+  timeline_projections: Record<string, { horizon_min: number; depth_cm: number; risk_score_norm: number; risk_score: number; risk_level: string; risk_category: string }[]>;
 }
 
 export interface RouteSummary {
@@ -101,6 +105,7 @@ export interface RouteSummary {
     length_m: number;
     depth_cm: number;
     risk_score: number;
+    risk_score_norm: number;
     is_hazard: boolean;
   }[];
   coordinates: [number, number][];
@@ -135,5 +140,65 @@ export interface AlertItem {
   message: string;
   depth_cm?: number;
   probability_pct?: number;
+  risk_norm?: number;
   utilization_pct?: number;
+}
+
+// Section 19.7: WorldPop Exposure Data
+export interface PopulationCell {
+  cell_id: string;
+  name: string;
+  coords: [number, number];
+  total_population: number;
+  exposed_population: number;
+  exposure_percentage: number;
+  max_predicted_depth_cm: number;
+  flood_risk_norm: number;
+  priority_score: number;
+  priority_level: string;
+}
+
+export interface PopulationExposureResponse {
+  source: string;
+  total_pilot_population: number;
+  total_exposed_population: number;
+  exposure_percentage: number;
+  high_risk_wards_count: number;
+  evacuation_priority: string;
+  population_cells: PopulationCell[];
+}
+
+// Section 27: Citizen Flood Report
+export interface CitizenReport {
+  id: string;
+  timestamp: string;
+  location: [number, number];
+  location_name: string;
+  water_depth: string;
+  depth_cm: number;
+  road_status: 'open' | 'partially blocked' | 'closed';
+  drain_status: 'normal' | 'overflowing' | 'blocked' | 'unknown';
+  description: string;
+  photo_url?: string;
+  verified: boolean;
+  reporter_type?: string;
+}
+
+// Section 27: User Uploaded Custom Layer
+export interface UserLayer {
+  id: string;
+  name: string;
+  data_type: string;
+  source: string;
+  feature_count: number;
+  features: any[];
+  active: boolean;
+  applied_at: string;
+}
+
+export interface LandmarkLocation {
+  name: string;
+  address: string;
+  coords: [number, number];
+  pin: string;
 }
