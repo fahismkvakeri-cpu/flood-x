@@ -999,6 +999,7 @@ def get_active_alerts(
                 "severity": "CRITICAL",
                 "road_id": r["road_id"],
                 "road_name": r["name"],
+                "coords": r["coords"][len(r["coords"]) // 2],
                 "message": f"CRITICAL INUNDATION DANGER: {r['name']} predicted depth {r['predicted_depth_cm']} cm ({r['risk_level']} Risk). Corridor impassable.",
                 "depth_cm": r["predicted_depth_cm"],
                 "probability_pct": r["flood_probability_pct"],
@@ -1010,6 +1011,7 @@ def get_active_alerts(
                 "severity": "WARNING",
                 "road_id": r["road_id"],
                 "road_name": r["name"],
+                "coords": r["coords"][len(r["coords"]) // 2],
                 "message": f"HIGH WATERLOGGING RISK: {r['name']} water depth ~ {r['predicted_depth_cm']} cm. Reduce speed.",
                 "depth_cm": r["predicted_depth_cm"],
                 "probability_pct": r["flood_probability_pct"],
@@ -1022,6 +1024,8 @@ def get_active_alerts(
                 "id": f"ALERT-{pipe['pipe_id']}-SURCHARGE",
                 "severity": "SURCHARGE",
                 "pipe_id": pipe["pipe_id"],
+                "coords": flood_state["drainage"]["nodes"][pipe["source"]]["coords"],
+                "drainage_area_name": flood_state["drainage"]["nodes"][pipe["source"]]["name"],
                 "message": f"DRAINAGE SURCHARGE: Conduit {pipe['pipe_id']} exceeded capacity ({pipe['utilization_pct']}%). Backwater ponding occurring.",
                 "utilization_pct": pipe["utilization_pct"]
             })
@@ -1031,6 +1035,8 @@ def get_active_alerts(
         alerts.append({
             "id": "ALERT-DRAINAGE-WATER-LEVEL-RISING",
             "severity": "SURCHARGE",
+            "coords": flood_state["drainage"]["nodes"][drainage["water_level_rising_nodes"][0]]["coords"],
+            "drainage_area_name": flood_state["drainage"]["nodes"][drainage["water_level_rising_nodes"][0]]["name"],
             "message": (
                 f"DRAINAGE CAPACITY WARNING: estimated water levels are rising in "
                 f"{len(drainage['water_level_rising_nodes'])} area(s); "

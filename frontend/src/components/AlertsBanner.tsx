@@ -4,9 +4,10 @@ import { AlertItem } from '../types';
 
 interface AlertsBannerProps {
   alerts: AlertItem[];
+  onSelectAlert: (alert: AlertItem) => void;
 }
 
-export const AlertsBanner: React.FC<AlertsBannerProps> = ({ alerts }) => {
+export const AlertsBanner: React.FC<AlertsBannerProps> = ({ alerts, onSelectAlert }) => {
   const [isOpen, setIsOpen] = useState(false);
 
   if (!alerts || alerts.length === 0) return null;
@@ -42,20 +43,22 @@ export const AlertsBanner: React.FC<AlertsBannerProps> = ({ alerts }) => {
       {isOpen && (
         <div className="px-4 py-3 bg-red-950/70 border-t border-red-900/40 max-h-48 overflow-y-auto space-y-1.5">
           {alerts.map((a) => (
-            <div
+            <button
               key={a.id}
+              onClick={() => onSelectAlert(a)}
+              type="button"
               className="text-xs flex items-center justify-between p-2 rounded bg-red-900/20 border border-red-800/40"
             >
               <div className="flex items-center gap-2">
                 <AlertOctagon className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
-                <span className="text-red-100">{a.message}</span>
+                <span className="text-left text-red-100">{a.message}</span>
               </div>
               {a.depth_cm && (
                 <span className="text-[11px] font-mono font-bold text-red-400 flex-shrink-0 ml-2">
                   Depth: {a.depth_cm} cm
                 </span>
               )}
-            </div>
+            </button>
           ))}
         </div>
       )}

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { ExternalLink } from 'lucide-react';
-import { RoadPrediction, RouteCalculationResponse, DrainageSimulation, CitizenReport, IndiaRiskPoint, PlaceDetail } from '../types';
+import { RoadPrediction, RouteCalculationResponse, DrainageSimulation, CitizenReport, IndiaRiskPoint, PlaceDetail, AlertItem } from '../types';
 
 interface FloodMapProps {
   roads: RoadPrediction[];
@@ -31,6 +31,8 @@ interface FloodMapProps {
   onSelectRiskPoint: (point: IndiaRiskPoint) => void;
   routePickMode: 'origin' | 'destination' | null;
   onSelectMapLocation: (coords: [number, number]) => void;
+  alerts: AlertItem[];
+  onSelectAlert: (alert: AlertItem) => void;
 }
 
 export const FloodMap: React.FC<FloodMapProps> = ({
@@ -61,6 +63,8 @@ export const FloodMap: React.FC<FloodMapProps> = ({
   onSelectRiskPoint,
   routePickMode,
   onSelectMapLocation,
+  alerts,
+  onSelectAlert,
 }) => {
   const [showRiskPoints, setShowRiskPoints] = useState(true);
   const [showNormalRoute, setShowNormalRoute] = useState(true);
@@ -98,6 +102,7 @@ export const FloodMap: React.FC<FloodMapProps> = ({
   const userLocLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const routeLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const operationalLayerGroupRef = useRef<L.LayerGroup | null>(null);
+  const alertLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const mapTileLayerRef = useRef<L.TileLayer | null>(null);
 
   // Initialize Leaflet Map
@@ -137,6 +142,7 @@ export const FloodMap: React.FC<FloodMapProps> = ({
     userLocLayerGroupRef.current = L.layerGroup().addTo(map);
     routeLayerGroupRef.current = L.layerGroup().addTo(map);
     operationalLayerGroupRef.current = L.layerGroup().addTo(map);
+    alertLayerGroupRef.current = L.layerGroup().addTo(map);
 
     mapInstanceRef.current = map;
 
@@ -286,6 +292,28 @@ export const FloodMap: React.FC<FloodMapProps> = ({
       mapInstanceRef.current.flyTo(flyToCoords, 15, { duration: 1.2 });
     }
   }, [flyToCoords]);
+
+  useEffect(() => {
+    if (!alertLayerGroupRef.current) return;
+    alertLayerGroupRef.current.clearLayers();
+
+    alerts.filter((alert) => alert.coords).forEach((alert) => {
+      const isCritical = alert.severity === 'CRITICAL';
+      const marker = L.circleMarker(alert.coords!, {
+        radius: isCritical ? 10 : 8,
+        color: '#fff',
+        weight: 2,
+        fillColor: isCritical ? '#ef4444' : '#f59e0b',
+        fillOpacity: 0.95,
+      });
+      marker.bindTooltip(
+        `<strong>${isCritical ? 'Critical alert' : 'Flood alert'}</strong><br/>${alert.road_name || alert.drainage_area_name || alert.pipe_id || 'Affected area'}<br/>${alert.message}`,
+        { sticky: true }
+      );
+      marker.on('click', () => onSelectAlert(alert));
+      marker.addTo(alertLayerGroupRef.current!);
+    });
+  }, [alerts, onSelectAlert]);
 
   // Update Road Polylines
   useEffect(() => {

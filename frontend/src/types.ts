@@ -163,6 +163,11 @@ export interface AlertItem {
   probability_pct?: number;
   risk_norm?: number;
   utilization_pct?: number;
+  coords?: [number, number];
+  drainage_area_name?: string;
+  water_level_rising_nodes?: string[];
+  max_estimated_water_level_cm?: number;
+  drainage_effectiveness_pct?: number;
 }
 
 // Section 19.7: WorldPop Exposure Data

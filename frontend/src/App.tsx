@@ -265,6 +265,14 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleSelectAlert = (alert: AlertItem) => {
+    if (alert.road_id) {
+      const road = predictData?.roads.find((candidate) => candidate.road_id === alert.road_id);
+      if (road) setSelectedRoad(road);
+    }
+    if (alert.coords) setFlyToCoords(alert.coords);
+  };
+
   const handleSelectMapLocation = (coords: [number, number]) => {
     handleSelectLandmark(coords, `Map point ${coords[0].toFixed(4)}, ${coords[1].toFixed(4)}`);
   };
@@ -316,7 +324,7 @@ export const App: React.FC = () => {
       />
 
       {/* Real-time Alerts Ticker */}
-      <AlertsBanner alerts={alerts} />
+      <AlertsBanner alerts={alerts} onSelectAlert={handleSelectAlert} />
 
       {/* SIH Section 14 Demo Flow Banner */}
       <div className="bg-gradient-to-r from-indigo-950/70 via-slate-900 to-blue-950/70 border-b border-indigo-900/40 px-4 py-1.5 flex items-center justify-between gap-3 text-xs">
@@ -409,6 +417,8 @@ export const App: React.FC = () => {
               onSelectRiskPoint={setSelectedRiskPoint}
               routePickMode={routePickMode}
               onSelectMapLocation={handleSelectMapLocation}
+              alerts={alerts}
+              onSelectAlert={handleSelectAlert}
             />
 
           ) : (
