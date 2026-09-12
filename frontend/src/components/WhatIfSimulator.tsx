@@ -1,6 +1,7 @@
 import React from 'react';
 import { Sliders, CloudRain, ShieldAlert, RefreshCw } from 'lucide-react';
 import { DrainageSimulation } from '../types';
+import { InterventionImpactResponse } from '../types';
 
 interface WhatIfSimulatorProps {
   rainfallScenarioMm: number;
@@ -9,6 +10,8 @@ interface WhatIfSimulatorProps {
   onBlockageChange: (val: number) => void;
   onReset: () => void;
   drainage?: DrainageSimulation | null;
+  interventionImpact?: InterventionImpactResponse | null;
+  onEvaluateIntervention: (interventionType: string) => void;
 }
 
 const RAIN_PRESETS = [50, 80, 100, 150];
@@ -21,7 +24,10 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({
   onBlockageChange,
   onReset,
   drainage,
+  interventionImpact,
+  onEvaluateIntervention,
 }) => {
+  const [interventionType, setInterventionType] = React.useState('CLEAR_DRAIN');
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl space-y-4">
       <div className="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -139,6 +145,29 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({
           </div>
         </div>
       )}
+
+      <div className="border-t border-slate-800 pt-3 space-y-2">
+        <div className="text-[11px] font-bold uppercase tracking-wider text-rose-200">Intervention impact</div>
+        <div className="flex gap-2">
+          <select value={interventionType} onChange={(event) => setInterventionType(event.target.value)} className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-2 text-[11px] text-white">
+            <option value="CLEAR_DRAIN">Clear priority drain</option>
+            <option value="ACTIVATE_PUMP">Activate portable pump</option>
+            <option value="TRAFFIC_CONTROL">Close and divert road</option>
+          </select>
+          <button type="button" onClick={() => onEvaluateIntervention(interventionType)} className="rounded bg-rose-600 px-2.5 py-2 text-[11px] font-bold text-white hover:bg-rose-500">Evaluate</button>
+        </div>
+        {interventionImpact && (
+          <div className="rounded-lg border border-rose-500/30 bg-rose-950/20 p-2.5 text-[11px] text-slate-300 space-y-1">
+            <div className="font-semibold text-white">{interventionImpact.intervention_label}</div>
+            <div className="grid grid-cols-2 gap-1.5 pt-1">
+              <span>Water saved</span><strong className="text-cyan-300">{interventionImpact.impact.retained_water_reduction_m3} m³</strong>
+              <span>Level reduction</span><strong className="text-cyan-300">{interventionImpact.impact.water_level_reduction_cm} cm</strong>
+              <span>People protected</span><strong className="text-emerald-300">{interventionImpact.impact.population_protected.toLocaleString()}</strong>
+              <span>Critical roads avoided</span><strong className="text-emerald-300">{interventionImpact.impact.critical_roads_avoided}</strong>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

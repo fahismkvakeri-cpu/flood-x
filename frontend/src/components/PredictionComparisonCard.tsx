@@ -1,16 +1,18 @@
 import React from 'react';
 import { X, CheckCircle2, GitCompare, Gauge } from 'lucide-react';
-import { CitizenReport, RoadPrediction } from '../types';
+import { CitizenReport, ObservationFusionResponse, RoadPrediction } from '../types';
 
 interface PredictionComparisonCardProps {
   report: CitizenReport | null;
   road: RoadPrediction | null;
+  fusion: ObservationFusionResponse | null;
   onClose: () => void;
 }
 
 export const PredictionComparisonCard: React.FC<PredictionComparisonCardProps> = ({
   report,
   road,
+  fusion,
   onClose,
 }) => {
   if (!report) return null;
@@ -87,6 +89,23 @@ export const PredictionComparisonCard: React.FC<PredictionComparisonCardProps> =
           Variance is {Math.abs(variance)} cm ({variance >= 0 ? '+' : ''}{variance} cm). Field report confirms active street waterlogging and drain overflow.
         </p>
       </div>
+
+      {fusion && (
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 p-3 text-[11px] space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-bold uppercase tracking-wider text-emerald-200">Evidence Fusion</span>
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${fusion.status === 'CONFIRMED' ? 'bg-emerald-900/70 text-emerald-200' : 'bg-amber-900/70 text-amber-200'}`}>
+              {fusion.status.replace(/_/g, ' ')}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-slate-300">
+            <span>Fused depth</span><strong className="text-cyan-300">{fusion.fused_depth_cm} cm</strong>
+            <span>Nearby reports</span><strong className="text-white">{fusion.nearby_report_count}</strong>
+            <span>Model agreement</span><strong className="text-emerald-300">{fusion.agreement_pct}%</strong>
+          </div>
+          <p className="text-[10px] text-slate-500">{fusion.source_summary}</p>
+        </div>
+      )}
 
       <div className="text-[11px] text-slate-300 bg-slate-950/60 p-2 rounded border border-slate-800 italic">
         "{report.description}"

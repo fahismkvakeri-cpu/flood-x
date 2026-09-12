@@ -10,6 +10,7 @@ import { AlertsBanner } from './components/AlertsBanner';
 import { CitizenReportModal } from './components/CitizenReportModal';
 import { DataUploadModal } from './components/DataUploadModal';
 import { PredictionComparisonCard } from './components/PredictionComparisonCard';
+import { ResponsePlanner } from './components/ResponsePlanner';
 import {
   FloodPredictResponse,
   RoadPrediction,
@@ -17,11 +18,16 @@ import {
   AlertItem,
   CitizenReport,
   PopulationExposureResponse,
+  EvacuationSummaryResponse,
+  OperationsSummaryResponse,
+  ResponsePlanResponse,
+  InterventionImpactResponse,
+  ObservationFusionResponse,
   UserLayer,
   IndiaRiskPoint,
   PlaceDetail,
 } from './types';
-import { Navigation, Sliders, Sparkles, Layers } from 'lucide-react';
+import { Navigation, Sliders, Sparkles, Layers, Siren } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [horizonMin, setHorizonMin] = useState<number>(60);
@@ -35,7 +41,7 @@ export const App: React.FC = () => {
   const [routeError, setRouteError] = useState<string | null>(null);
   const [showDrainage, setShowDrainage] = useState<boolean>(true);
   const [showCitizenPins, setShowCitizenPins] = useState<boolean>(true);
-  const [sidebarTab, setSidebarTab] = useState<'routing' | 'whatif' | 'layers'>('routing');
+  const [sidebarTab, setSidebarTab] = useState<'routing' | 'whatif' | 'layers' | 'response'>('routing');
 
   // New Section 27 States
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
@@ -46,6 +52,11 @@ export const App: React.FC = () => {
   const [selectedReport, setSelectedReport] = useState<CitizenReport | null>(null);
   const [userLayers, setUserLayers] = useState<UserLayer[]>([]);
   const [exposureData, setExposureData] = useState<PopulationExposureResponse | null>(null);
+  const [evacuationData, setEvacuationData] = useState<EvacuationSummaryResponse | null>(null);
+  const [operationsData, setOperationsData] = useState<OperationsSummaryResponse | null>(null);
+  const [responsePlan, setResponsePlan] = useState<ResponsePlanResponse | null>(null);
+  const [interventionImpact, setInterventionImpact] = useState<InterventionImpactResponse | null>(null);
+  const [observationFusion, setObservationFusion] = useState<ObservationFusionResponse | null>(null);
 
   const [predictData, setPredictData] = useState<FloodPredictResponse | null>(null);
   const [routeData, setRouteData] = useState<RouteCalculationResponse | null>(null);
@@ -143,6 +154,56 @@ export const App: React.FC = () => {
     }
   };
 
+  const fetchEvacuationSummary = async () => {
+    try {
+      const res = await fetch(
+        `/api/evacuation/summary?t=${horizonMin}&rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setEvacuationData(data);
+      }
+    } catch (err) {
+      console.error('Error fetching evacuation summary:', err);
+    }
+  };
+
+  const fetchOperationsSummary = async () => {
+    try {
+      const res = await fetch(
+        `/api/operations/maintenance?t=${horizonMin}&rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setOperationsData(data);
+      }
+    } catch (err) {
+      console.error('Error fetching operations summary:', err);
+    }
+  };
+
+  const fetchResponsePlan = async () => {
+    try {
+      const res = await fetch(`/api/operations/response-plan?t=${horizonMin}&rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`);
+      if (res.ok) setResponsePlan(await res.json());
+    } catch (err) {
+      console.error('Error fetching response plan:', err);
+    }
+  };
+
+  const evaluateIntervention = async (interventionType: string) => {
+    try {
+      const res = await fetch('/api/simulation/intervention', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rainfall_scenario_mm: rainScenarioMm, blockage_percent: blockagePct, forecast_horizon_min: horizonMin, intervention_type: interventionType }),
+      });
+      if (res.ok) setInterventionImpact(await res.json());
+    } catch (err) {
+      console.error('Error evaluating intervention:', err);
+    }
+  };
+
   // Fetch citizen reports (Section 27.5)
   const fetchReports = async () => {
     try {
@@ -184,6 +245,21 @@ export const App: React.FC = () => {
     }
   };
 
+  const updateAlertWorkflow = async (alertId: string, action: 'ACKNOWLEDGE' | 'ESCALATE') => {
+    try {
+      const res = await fetch('/api/alerts/workflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alert_id: alertId, action }),
+      });
+      if (!res.ok) return;
+      const result = await res.json();
+      setAlerts((current) => current.map((alert) => alert.id === alertId ? { ...alert, workflow_status: result.workflow_status, workflow_updated_at: result.updated_at } : alert));
+    } catch (err) {
+      console.error('Error updating alert workflow:', err);
+    }
+  };
+
   const fetchIndiaOverview = async () => {
     try {
       const res = await fetch(`/api/india/risk-overview?rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`);
@@ -203,8 +279,32 @@ export const App: React.FC = () => {
   };
 
   useEffect(() => {
-    Promise.all([fetchPredictions(), fetchRoute(), fetchExposure(), fetchAlerts(), fetchReports(), fetchLayers(), fetchIndiaOverview(), fetchPlaceDetail()]);
+    Promise.all([
+      fetchPredictions(),
+      fetchRoute(),
+      fetchExposure(),
+      fetchEvacuationSummary(),
+      fetchOperationsSummary(),
+      fetchResponsePlan(),
+      fetchAlerts(),
+      fetchReports(),
+      fetchLayers(),
+      fetchIndiaOverview(),
+      fetchPlaceDetail(),
+    ]);
   }, [horizonMin, rainScenarioMm, blockagePct, selectedVehicle, routeOrigin, routeDestination]);
+
+  useEffect(() => {
+    if (!selectedReport) {
+      setObservationFusion(null);
+      return;
+    }
+    const roadId = selectedRoad?.road_id || predictData?.roads[0]?.road_id || 'ROAD-101';
+    fetch(`/api/flood/fusion/${roadId}?t=${horizonMin}&rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setObservationFusion(data))
+      .catch((err) => console.error('Error fetching observation fusion:', err));
+  }, [selectedReport, selectedRoad, predictData, horizonMin, rainScenarioMm, blockagePct]);
 
   // Section 27.1: Geolocation Handler
   const handleUseMyLocation = () => {
@@ -324,7 +424,7 @@ export const App: React.FC = () => {
       />
 
       {/* Real-time Alerts Ticker */}
-      <AlertsBanner alerts={alerts} onSelectAlert={handleSelectAlert} />
+      <AlertsBanner alerts={alerts} onSelectAlert={handleSelectAlert} onUpdateAlert={updateAlertWorkflow} />
 
       {/* SIH Section 14 Demo Flow Banner */}
       <div className="bg-gradient-to-r from-indigo-950/70 via-slate-900 to-blue-950/70 border-b border-indigo-900/40 px-4 py-1.5 flex items-center justify-between gap-3 text-xs">
@@ -501,6 +601,7 @@ export const App: React.FC = () => {
             <PredictionComparisonCard
               report={selectedReport}
               road={predictData?.roads[0] || null}
+              fusion={observationFusion}
               onClose={() => setSelectedReport(null)}
             />
           </div>
@@ -521,6 +622,18 @@ export const App: React.FC = () => {
               >
                 <Navigation className="w-3.5 h-3.5" />
                 <span>Safe Routing</span>
+              </button>
+
+              <button
+                onClick={() => setSidebarTab('response')}
+                className={`flex-1 py-2 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition ${
+                  sidebarTab === 'response'
+                    ? 'bg-rose-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Siren className="w-3.5 h-3.5" />
+                <span>Response</span>
               </button>
 
               <button
@@ -551,14 +664,80 @@ export const App: React.FC = () => {
             {/* Sidebar Content */}
             <div className="p-3 space-y-4 flex-1">
               {sidebarTab === 'routing' && (
-                <EmergencyRoutingPanel
-                  routeOrigin={routeOrigin}
-                  routeDestination={routeDestination}
-                  routePickMode={routePickMode}
-                  routeError={routeError}
-                  onStartPicking={(mode) => setRoutePickMode(mode)}
-                  onRecalculateRoute={fetchRoute}
-                />
+                <>
+                  <EmergencyRoutingPanel
+                    routeOrigin={routeOrigin}
+                    routeDestination={routeDestination}
+                    routePickMode={routePickMode}
+                    routeError={routeError}
+                    onStartPicking={(mode) => setRoutePickMode(mode)}
+                    onRecalculateRoute={fetchRoute}
+                  />
+
+                  {evacuationData && (
+                    <div className="rounded-xl border border-violet-500/40 bg-slate-800/50 p-3.5 space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-700 pb-2">
+                        <h3 className="text-[11px] font-bold uppercase tracking-wider text-violet-300">Evacuation & Shelter</h3>
+                        <span className="rounded border border-violet-700 bg-violet-950/60 px-1.5 py-0.5 text-[10px] font-bold text-violet-200">
+                          {evacuationData.evacuation_priority}
+                        </span>
+                      </div>
+
+                      <div className="rounded-lg border border-violet-700/40 bg-violet-950/30 p-2.5 text-xs text-violet-100">
+                        <div className="font-bold text-white">Recommended shelter</div>
+                        <div className="mt-1 text-sm font-semibold">{evacuationData.recommended_shelter.name}</div>
+                        <div className="mt-1 text-[11px] text-violet-200/80">{evacuationData.recommended_shelter.available_space} spaces available · {evacuationData.recommended_shelter.distance_km} km away</div>
+                      </div>
+
+                      <div className="space-y-2 text-[11px] text-slate-300">
+                        {evacuationData.shelters.map((shelter) => (
+                          <div key={shelter.id} className="rounded-lg border border-slate-700 bg-slate-900/50 p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold text-white">{shelter.name}</span>
+                              <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">{shelter.suitability}</span>
+                            </div>
+                            <div className="mt-1 text-[10px] text-slate-400">{shelter.available_space} free / {shelter.capacity} total</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {operationsData && (
+                    <div className="rounded-xl border border-amber-500/40 bg-slate-800/50 p-3.5 space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-700 pb-2">
+                        <h3 className="text-[11px] font-bold uppercase tracking-wider text-amber-300">Field Ops & Maintenance</h3>
+                        <span className="rounded border border-amber-700 bg-amber-950/60 px-1.5 py-0.5 text-[10px] font-bold text-amber-200">
+                          {operationsData.service_health_pct}%
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-300">
+                        <div className="rounded bg-slate-900/60 p-2 border border-slate-700">
+                          <div className="text-slate-400">Critical</div>
+                          <div className="text-lg font-bold text-red-300">{operationsData.priority_summary.critical}</div>
+                        </div>
+                        <div className="rounded bg-slate-900/60 p-2 border border-slate-700">
+                          <div className="text-slate-400">High</div>
+                          <div className="text-lg font-bold text-amber-300">{operationsData.priority_summary.high}</div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 text-[11px] text-slate-300">
+                        {operationsData.assets.map((asset) => (
+                          <div key={asset.id} className="rounded-lg border border-slate-700 bg-slate-900/50 p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold text-white">{asset.name}</span>
+                              <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">{asset.priority}</span>
+                            </div>
+                            <div className="mt-1 text-[10px] text-slate-400">{asset.location} · {asset.status}</div>
+                            <div className="mt-1 text-[10px] text-amber-200">{asset.message}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
 
               {sidebarTab === 'whatif' && (
@@ -571,9 +750,14 @@ export const App: React.FC = () => {
                   onReset={() => {
                     setRainScenarioMm(85);
                     setBlockagePct(0);
+                    setInterventionImpact(null);
                   }}
+                  interventionImpact={interventionImpact}
+                  onEvaluateIntervention={evaluateIntervention}
                 />
               )}
+
+              {sidebarTab === 'response' && responsePlan && <ResponsePlanner plan={responsePlan} />}
 
               {sidebarTab === 'layers' && (
                 <div className="space-y-3">

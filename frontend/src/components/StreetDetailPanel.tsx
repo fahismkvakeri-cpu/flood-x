@@ -73,6 +73,18 @@ export const StreetDetailPanel: React.FC<StreetDetailPanelProps> = ({
           </div>
         </div>
 
+        <div className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 p-3 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold text-cyan-200">Expected depth range</span>
+            <span className="font-bold text-cyan-300">{road.depth_lower_cm}-{road.depth_upper_cm} cm</span>
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400">
+            <span>Confidence: {road.confidence_pct}%</span>
+            <span>Decision-support estimate</span>
+          </div>
+          <p className="mt-1 text-[10px] leading-relaxed text-slate-500">{road.uncertainty_reason}</p>
+        </div>
+
         {/* Plain Language Reason Box (Section 6) */}
         {road.plain_reason && (
           <div className="bg-blue-950/20 border border-blue-800/40 rounded-lg p-3 text-xs text-blue-200/90 space-y-1">

@@ -24,6 +24,9 @@ export interface RoadPrediction {
   drainage_effectiveness_pct: number;
   drainage_level_status: string;
   confidence_pct: number;
+  depth_lower_cm: number;
+  depth_upper_cm: number;
+  uncertainty_reason: string;
   is_closed: boolean;
   explainability: Record<string, number>;
   top_factor: string;
@@ -168,6 +171,103 @@ export interface AlertItem {
   water_level_rising_nodes?: string[];
   max_estimated_water_level_cm?: number;
   drainage_effectiveness_pct?: number;
+  workflow_status?: 'NEW' | 'ACKNOWLEDGED' | 'ESCALATED';
+  workflow_updated_at?: string;
+}
+
+export interface EvacuationShelter {
+  id: string;
+  name: string;
+  type: string;
+  coords: [number, number];
+  capacity: number;
+  occupancy: number;
+  available_space: number;
+  distance_km: number;
+  status: string;
+  suitability: 'HIGH' | 'MEDIUM' | 'LOW';
+  estimated_demand: number;
+  message: string;
+}
+
+export interface EvacuationSummaryResponse {
+  evacuation_priority: 'CRITICAL' | 'HIGH' | 'ELEVATED';
+  total_exposed_population: number;
+  exposure_percentage: number;
+  shelters: EvacuationShelter[];
+  recommended_shelter: EvacuationShelter;
+  summary: string;
+}
+
+export interface MaintenanceAsset {
+  id: string;
+  name: string;
+  type: string;
+  location: string;
+  priority: 'CRITICAL' | 'HIGH' | 'MEDIUM';
+  status: string;
+  risk_score: number;
+  last_inspected_hours: number;
+  message: string;
+}
+
+export interface OperationsSummaryResponse {
+  field_status: string;
+  operations_window_min: number;
+  total_assets: number;
+  critical_assets: number;
+  open_work_orders: number;
+  service_health_pct: number;
+  active_alerts: number;
+  assets: MaintenanceAsset[];
+  priority_summary: {
+    critical: number;
+    high: number;
+    monitor: number;
+  };
+  recommendation: string;
+}
+
+export interface ResponsePlanAction {
+  id: string;
+  type: string;
+  urgency: string;
+  title: string;
+  target: string;
+  reason: string;
+  expected_depth_reduction_cm: number;
+  population_protected: number;
+  evidence: string;
+  priority_score: number;
+}
+
+export interface ResponsePlanResponse {
+  forecast_horizon_min: number;
+  scenario: { rainfall_mm: number; blockage_pct: number };
+  decision_summary: string;
+  total_population_protected: number;
+  actions: ResponsePlanAction[];
+}
+
+export interface InterventionImpactResponse {
+  intervention_type: string;
+  intervention_label: string;
+  baseline: { blockage_pct: number; retained_floodwater_m3: number; max_water_level_cm: number; drainage_effectiveness_pct: number; exposed_population: number; critical_roads: number };
+  after: { blockage_pct: number; retained_floodwater_m3: number; max_water_level_cm: number; drainage_effectiveness_pct: number; exposed_population: number; critical_roads: number };
+  impact: { retained_water_reduction_m3: number; water_level_reduction_cm: number; population_protected: number; critical_roads_avoided: number };
+}
+
+export interface ObservationFusionResponse {
+  location_id: string;
+  road_name: string;
+  model_depth_cm: number;
+  model_confidence_pct: number;
+  observed_depth_cm: number | null;
+  fused_depth_cm: number;
+  nearby_report_count: number;
+  agreement_pct: number;
+  status: 'CONFIRMED' | 'REVIEW' | 'DIVERGENCE' | 'NO_FIELD_EVIDENCE';
+  source_summary: string;
 }
 
 // Section 19.7: WorldPop Exposure Data

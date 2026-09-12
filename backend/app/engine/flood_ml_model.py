@@ -155,6 +155,14 @@ class FloodMLModel:
         plain_reason = " ".join(reasons) if reasons else "Normal hydrological equilibrium with passable road conditions."
 
         confidence = max(60.0, round(96.0 - (t_minutes * 0.18), 1))
+        uncertainty_ratio = round(0.10 + ((100.0 - confidence) / 100.0) * 0.45, 3)
+        depth_lower_cm = round(max(0.0, predicted_depth_cm * (1.0 - uncertainty_ratio)), 1)
+        depth_upper_cm = round(predicted_depth_cm * (1.0 + uncertainty_ratio), 1)
+        uncertainty_reason = (
+            "Range widens with forecast horizon and limited calibrated water-level observations."
+            if t_minutes > 60
+            else "Range reflects prototype-model uncertainty and available drainage observations."
+        )
 
         return {
             "road_id": road["id"],
@@ -182,6 +190,9 @@ class FloodMLModel:
             "drainage_effectiveness_pct": drainage_effectiveness,
             "drainage_level_status": drain_node["level_status"] if drain_node else "UNKNOWN",
             "confidence_pct": confidence,
+            "depth_lower_cm": depth_lower_cm,
+            "depth_upper_cm": depth_upper_cm,
+            "uncertainty_reason": uncertainty_reason,
             "is_closed": predicted_depth_cm >= 25.0 or norm_risk >= 0.80,
             "explainability": feature_percentages,
             "top_factor": top_factor,

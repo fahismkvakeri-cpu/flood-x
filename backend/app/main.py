@@ -47,6 +47,93 @@ INDIA_RISK_CITIES = [
 
 INDIA_DATASET_PATH = Path(__file__).resolve().parents[2] / "flood_risk_dataset_india.csv"
 _india_dataset_cache: Optional[Dict[str, Any]] = None
+ALERT_WORKFLOW: Dict[str, Dict[str, Any]] = {}
+
+SHELTER_CENTERS = [
+    {
+        "id": "SHELTER-BHABHA",
+        "name": "Bhabha Emergency Camp",
+        "coords": [19.0640, 72.8805],
+        "capacity": 560,
+        "occupancy": 190,
+        "type": "Temporary Shelter",
+        "status": "READY",
+    },
+    {
+        "id": "SHELTER-KURLA",
+        "name": "Kurla Transit Relief Center",
+        "coords": [19.0685, 72.8745],
+        "capacity": 420,
+        "occupancy": 260,
+        "type": "Community Shelter",
+        "status": "READY",
+    },
+    {
+        "id": "SHELTER-BKC",
+        "name": "BKC Safe Haven",
+        "coords": [19.0770, 72.8680],
+        "capacity": 700,
+        "occupancy": 210,
+        "type": "Elevated Shelter",
+        "status": "READY",
+    },
+    {
+        "id": "SHELTER-MANKHURD",
+        "name": "Mankhurd Recovery Point",
+        "coords": [19.0720, 72.8860],
+        "capacity": 390,
+        "occupancy": 310,
+        "type": "Relief Point",
+        "status": "PARTIAL",
+    },
+]
+
+MAINTENANCE_ASSETS = [
+    {
+        "id": "ASSET-DRAIN-04",
+        "name": "Kurla Drain Line 04",
+        "type": "Drain",
+        "location": "Maharashtra Nagar",
+        "priority": "CRITICAL",
+        "status": "BLOCKED",
+        "risk_score": 89,
+        "last_inspected_hours": 78,
+        "message": "High silt accumulation reduces conveyance and raises local ponding risk.",
+    },
+    {
+        "id": "ASSET-PUMP-02",
+        "name": "BKC Pump Station 02",
+        "type": "Pump Station",
+        "location": "BKC West",
+        "priority": "HIGH",
+        "status": "CHECK",
+        "risk_score": 74,
+        "last_inspected_hours": 44,
+        "message": "Hydraulic backup check recommended before peak rainfall window.",
+    },
+    {
+        "id": "ASSET-CULVERT-07",
+        "name": "Bail Bazar Culvert 07",
+        "type": "Culvert",
+        "location": "Bail Bazar",
+        "priority": "HIGH",
+        "status": "MONITOR",
+        "risk_score": 68,
+        "last_inspected_hours": 36,
+        "message": "Flow is elevated; debris screens should be checked during the next cycle.",
+    },
+    {
+        "id": "ASSET-ROAD-11",
+        "name": "LBS Marg Road Surface Segment",
+        "type": "Road",
+        "location": "Kurla West",
+        "priority": "MEDIUM",
+        "status": "MONITOR",
+        "risk_score": 58,
+        "last_inspected_hours": 52,
+        "message": "Surface water accumulation persists, requiring inspection after the next rain pulse.",
+    },
+]
 
 INDIA_MAINLAND_MASK = [
     (8.0, 77.5), (8.8, 76.2), (10.5, 75.0), (13.0, 74.2),
@@ -419,6 +506,13 @@ class SimulationRequest(BaseModel):
     blockage_percent: float = Field(default=0.0, ge=0.0, le=95.0, description="Drainage blockage percentage")
     forecast_horizon_min: int = Field(default=60, ge=0, le=180, description="Horizon in minutes")
 
+class AlertWorkflowRequest(BaseModel):
+    alert_id: str
+    action: str = Field(description="ACKNOWLEDGE or ESCALATE")
+
+class InterventionRequest(SimulationRequest):
+    intervention_type: str = Field(default="CLEAR_DRAIN", description="CLEAR_DRAIN, ACTIVATE_PUMP, or TRAFFIC_CONTROL")
+
 class RouteRequest(BaseModel):
     origin_id: Optional[str] = "J_ASIAN_HEART"
     destination_id: Optional[str] = "J_BAIL_BAZAR"
@@ -734,6 +828,51 @@ def run_simulation(req: SimulationRequest):
         blockage_pct=req.blockage_percent
     )
 
+
+@app.post("/api/simulation/intervention")
+def simulate_intervention(req: InterventionRequest):
+    """Compares the current scenario with a transparent response intervention."""
+    baseline = flood_ml_model.predict_all(req.forecast_horizon_min, req.rainfall_scenario_mm, req.blockage_percent)
+    baseline_exposure = get_population_exposure(req.forecast_horizon_min, req.rainfall_scenario_mm, req.blockage_percent)
+    intervention_effects = {
+        "CLEAR_DRAIN": {"blockage_delta": -25.0, "label": "Clear priority drain"},
+        "ACTIVATE_PUMP": {"blockage_delta": -18.0, "label": "Activate portable pump"},
+        "TRAFFIC_CONTROL": {"blockage_delta": 0.0, "label": "Close and divert critical road"},
+    }
+    effect = intervention_effects.get(req.intervention_type.upper())
+    if not effect:
+        raise HTTPException(status_code=400, detail="Unknown intervention_type")
+
+    adjusted_blockage = max(0.0, req.blockage_percent + effect["blockage_delta"])
+    after = flood_ml_model.predict_all(req.forecast_horizon_min, req.rainfall_scenario_mm, adjusted_blockage)
+    after_exposure = get_population_exposure(req.forecast_horizon_min, req.rainfall_scenario_mm, adjusted_blockage)
+    return {
+        "intervention_type": req.intervention_type.upper(),
+        "intervention_label": effect["label"],
+        "baseline": {
+            "blockage_pct": req.blockage_percent,
+            "retained_floodwater_m3": baseline["drainage"]["retained_floodwater_m3"],
+            "max_water_level_cm": baseline["drainage"]["max_estimated_water_level_cm"],
+            "drainage_effectiveness_pct": baseline["drainage"]["drainage_effectiveness_pct"],
+            "exposed_population": baseline_exposure["total_exposed_population"],
+            "critical_roads": baseline["kpis"]["critical_roads"],
+        },
+        "after": {
+            "blockage_pct": adjusted_blockage,
+            "retained_floodwater_m3": after["drainage"]["retained_floodwater_m3"],
+            "max_water_level_cm": after["drainage"]["max_estimated_water_level_cm"],
+            "drainage_effectiveness_pct": after["drainage"]["drainage_effectiveness_pct"],
+            "exposed_population": after_exposure["total_exposed_population"],
+            "critical_roads": after["kpis"]["critical_roads"],
+        },
+        "impact": {
+            "retained_water_reduction_m3": round(max(0.0, baseline["drainage"]["retained_floodwater_m3"] - after["drainage"]["retained_floodwater_m3"]), 1),
+            "water_level_reduction_cm": round(max(0.0, baseline["drainage"]["max_estimated_water_level_cm"] - after["drainage"]["max_estimated_water_level_cm"]), 1),
+            "population_protected": max(0, baseline_exposure["total_exposed_population"] - after_exposure["total_exposed_population"]),
+            "critical_roads_avoided": max(0, baseline["kpis"]["critical_roads"] - after["kpis"]["critical_roads"]),
+        },
+    }
+
 @app.post("/api/route")
 def calculate_flood_aware_route(req: RouteRequest):
     """Generates flood-aware emergency route comparing normal vs safe route (Section 8, 10, 21)."""
@@ -795,6 +934,191 @@ def get_population_exposure(
     flood_state = flood_ml_model.predict_all(t, rain_mm, blockage_pct)
     return exposure_engine.calculate_exposure(flood_state["roads"])
 
+
+def get_evacuation_summary(
+    t: int = 60,
+    rain_mm: float = 85.0,
+    blockage_pct: float = 0.0,
+):
+    """Builds evacuation planning guidance and shelter allocation for flood-affected communities."""
+    flood_state = flood_ml_model.predict_all(t, rain_mm, blockage_pct)
+    exposure = exposure_engine.calculate_exposure(flood_state["roads"])
+
+    risk_multiplier = 1.0 + (rain_mm / 200.0) + (blockage_pct / 150.0)
+    center = PILOT_ZONE["center"]
+
+    shelter_records = []
+    for shelter in SHELTER_CENTERS:
+        shelter_lat, shelter_lon = shelter["coords"]
+        distance_km = math.hypot((shelter_lat - center[0]) * 111.0, (shelter_lon - center[1]) * 111.0)
+        available_capacity = max(0, shelter["capacity"] - shelter["occupancy"])
+        risk_adjustment = max(0.0, min(1.0, (risk_multiplier - 1.0) * 0.85))
+        predicted_demand = max(1200, int(exposure["total_exposed_population"] * 0.04 * (1.0 + risk_adjustment)))
+        suitability = "HIGH" if available_capacity >= predicted_demand * 0.7 else ("MEDIUM" if available_capacity > 0 else "LOW")
+        shelter_records.append({
+            "id": shelter["id"],
+            "name": shelter["name"],
+            "type": shelter["type"],
+            "coords": shelter["coords"],
+            "capacity": shelter["capacity"],
+            "occupancy": shelter["occupancy"],
+            "available_space": available_capacity,
+            "distance_km": round(distance_km, 2),
+            "status": shelter["status"],
+            "suitability": suitability,
+            "estimated_demand": predicted_demand,
+            "message": f"{available_capacity} spaces available for evacuees before peak inflow",
+        })
+
+    recommended_shelter = min(
+        shelter_records,
+        key=lambda item: (0 if item["suitability"] == "HIGH" else 1, item["distance_km"], -item["available_space"]),
+    )
+
+    return {
+        "evacuation_priority": exposure["evacuation_priority"],
+        "total_exposed_population": exposure["total_exposed_population"],
+        "exposure_percentage": exposure["exposure_percentage"],
+        "shelters": shelter_records,
+        "recommended_shelter": recommended_shelter,
+        "summary": f"{exposure['evacuation_priority']} priority evacuation response. Recommend {recommended_shelter['name']} for nearest high-capacity sheltering.",
+    }
+
+
+@app.get("/api/evacuation/summary")
+def get_evacuation_summary_api(
+    t: int = Query(60, ge=0, le=180),
+    rain_mm: float = Query(85.0, ge=10.0, le=250.0),
+    blockage_pct: float = Query(0.0, ge=0.0, le=95.0),
+):
+    """Returns shelter availability and evacuation prioritization for flood response planning."""
+    return get_evacuation_summary(t=t, rain_mm=rain_mm, blockage_pct=blockage_pct)
+
+
+def get_operations_summary(
+    t: int = 60,
+    rain_mm: float = 85.0,
+    blockage_pct: float = 0.0,
+):
+    """Generates city operations and maintenance priorities for field teams and civic response."""
+    flood_state = flood_ml_model.predict_all(t, rain_mm, blockage_pct)
+    active_alerts = get_active_alerts(t=t, rain_mm=rain_mm, blockage_pct=blockage_pct)
+    critical_assets = []
+    for asset in MAINTENANCE_ASSETS:
+        adjusted_risk = asset["risk_score"] + min(25, int((rain_mm / 10.0) + (blockage_pct * 0.6)))
+        if asset["priority"] in ["CRITICAL", "HIGH"] or adjusted_risk >= 70:
+            critical_assets.append({
+                **asset,
+                "risk_score": min(99, adjusted_risk),
+            })
+
+    service_health_pct = max(30, 100 - sum(item["risk_score"] for item in critical_assets) // max(1, len(critical_assets)))
+    return {
+        "field_status": "ACTIVE RESPONSE",
+        "operations_window_min": t,
+        "total_assets": len(MAINTENANCE_ASSETS),
+        "critical_assets": len(critical_assets),
+        "open_work_orders": max(2, len(critical_assets) + 1),
+        "service_health_pct": service_health_pct,
+        "active_alerts": active_alerts["active_alert_count"],
+        "assets": critical_assets,
+        "priority_summary": {
+            "critical": sum(1 for item in critical_assets if item["priority"] == "CRITICAL"),
+            "high": sum(1 for item in critical_assets if item["priority"] == "HIGH"),
+            "monitor": sum(1 for item in critical_assets if item["priority"] == "MEDIUM"),
+        },
+        "recommendation": "Dispatch quick-response crews to blocked drainage and pump checks before the next rainfall pulse.",
+    }
+
+
+@app.get("/api/operations/maintenance")
+def get_operations_summary_api(
+    t: int = Query(60, ge=0, le=180),
+    rain_mm: float = Query(85.0, ge=10.0, le=250.0),
+    blockage_pct: float = Query(0.0, ge=0.0, le=95.0),
+):
+    """Returns field operations and maintenance priorities for civic maintenance teams."""
+    return get_operations_summary(t=t, rain_mm=rain_mm, blockage_pct=blockage_pct)
+
+
+def get_response_plan(
+    t: int = 60,
+    rain_mm: float = 85.0,
+    blockage_pct: float = 0.0,
+) -> Dict[str, Any]:
+    """Ranks explainable response actions from the current flood and exposure state."""
+    flood_state = flood_ml_model.predict_all(t, rain_mm, blockage_pct)
+    exposure = get_population_exposure(t=t, rain_mm=rain_mm, blockage_pct=blockage_pct)
+    operations = get_operations_summary(t=t, rain_mm=rain_mm, blockage_pct=blockage_pct)
+    roads = sorted(flood_state["roads"], key=lambda road: (road["risk_score_norm"], road["predicted_depth_cm"]), reverse=True)
+    actions: List[Dict[str, Any]] = []
+
+    for asset in operations["assets"][:2]:
+        asset_factor = asset["risk_score"] / 100.0
+        depth_reduction = round(8.0 + (asset_factor * 14.0) + (blockage_pct * 0.08), 1)
+        protected = int(round(exposure["total_exposed_population"] * (0.08 + asset_factor * 0.12)))
+        actions.append({
+            "id": f"ACTION-{asset['id']}",
+            "type": "FIELD_INTERVENTION",
+            "urgency": "IMMEDIATE" if asset["priority"] == "CRITICAL" else "NEXT 30 MIN",
+            "title": f"Dispatch crew to {asset['name']}",
+            "target": asset["location"],
+            "reason": asset["message"],
+            "expected_depth_reduction_cm": depth_reduction,
+            "population_protected": protected,
+            "evidence": f"Asset risk {asset['risk_score']}/100 · {flood_state['drainage']['drainage_effectiveness_pct']}% drainage effectiveness",
+            "priority_score": round(asset["risk_score"] + protected / 1000.0, 1),
+        })
+
+    if roads:
+        road = roads[0]
+        protected = int(round(exposure["total_exposed_population"] * min(0.3, 0.08 + road["risk_score_norm"] * 0.2)))
+        actions.append({
+            "id": f"ACTION-CLOSE-{road['road_id']}",
+            "type": "TRAFFIC_CONTROL",
+            "urgency": "BEFORE FLOOD PEAK",
+            "title": f"Prepare closure and diversion for {road['name']}",
+            "target": road["name"],
+            "reason": f"Forecast depth reaches {road['predicted_depth_cm']} cm with {road['flood_probability_pct']}% flood probability.",
+            "expected_depth_reduction_cm": 0.0,
+            "population_protected": protected,
+            "evidence": f"Risk {road['risk_score']}/100 · flood onset {road['time_to_flood_min'] or 'under 45'} min",
+            "priority_score": round(road["risk_score"] + protected / 1000.0, 1),
+        })
+
+    if flood_state["drainage"]["water_level_rising"]:
+        actions.append({
+            "id": "ACTION-PUMP-DEPLOYMENT",
+            "type": "HYDRAULIC_RESPONSE",
+            "urgency": "IMMEDIATE",
+            "title": "Deploy portable pump to rising drainage areas",
+            "target": ", ".join(flood_state["drainage"]["water_level_rising_nodes"][:2]),
+            "reason": "Modeled retained water is increasing faster than the connected network can convey runoff.",
+            "expected_depth_reduction_cm": round(min(25.0, flood_state["drainage"]["max_estimated_water_level_cm"] * 0.45), 1),
+            "population_protected": int(round(exposure["total_exposed_population"] * 0.18)),
+            "evidence": f"{flood_state['drainage']['retained_floodwater_m3']} m³ retained · max level {flood_state['drainage']['max_estimated_water_level_cm']} cm",
+            "priority_score": 94.0,
+        })
+
+    actions.sort(key=lambda action: action["priority_score"], reverse=True)
+    return {
+        "forecast_horizon_min": t,
+        "scenario": {"rainfall_mm": rain_mm, "blockage_pct": blockage_pct},
+        "decision_summary": f"{len(actions)} actions ranked for {exposure['total_exposed_population']} exposed people and {flood_state['kpis']['critical_roads']} critical roads.",
+        "total_population_protected": sum(action["population_protected"] for action in actions),
+        "actions": actions[:5],
+    }
+
+
+@app.get("/api/operations/response-plan")
+def get_response_plan_api(
+    t: int = Query(60, ge=0, le=180),
+    rain_mm: float = Query(85.0, ge=10.0, le=250.0),
+    blockage_pct: float = Query(0.0, ge=0.0, le=95.0),
+):
+    """Returns ranked, explainable actions for municipal flood response teams."""
+    return get_response_plan(t=t, rain_mm=rain_mm, blockage_pct=blockage_pct)
+
 # =========================================================================
 # SECTION 27: USER LOCATION, CITIZEN FLOOD REPORT & UPLOAD APIS
 # =========================================================================
@@ -850,6 +1174,52 @@ def submit_flood_report(req: CitizenReportRequest):
 def get_flood_reports(verified_only: bool = Query(False)):
     """Retrieves verified or recent citizen flood reports (Section 27.5)."""
     return {"reports": upload_service.get_reports(verified_only)}
+
+
+@app.get("/api/flood/fusion/{location_id}")
+def get_observation_fusion(
+    location_id: str,
+    t: int = Query(60, ge=0, le=180),
+    rain_mm: float = Query(85.0, ge=10.0, le=250.0),
+    blockage_pct: float = Query(0.0, ge=0.0, le=95.0),
+):
+    """Fuses a road prediction with nearby citizen observations for validation."""
+    road = next((item for item in ROADS if item["id"] == location_id), ROADS[0])
+    nowcast = nowcast_engine.get_nowcast(t, rain_mm)
+    drain_sim = drainage_twin.simulate(nowcast["avg_intensity_mm_hr"], blockage_pct)
+    prediction = flood_ml_model.predict_for_road(road, t, rain_mm, blockage_pct, drain_sim)
+
+    def distance_km(first: List[float], second: List[float]) -> float:
+        return math.hypot((first[0] - second[0]) * 111.0, (first[1] - second[1]) * 111.0)
+
+    road_midpoint = road["coords"][len(road["coords"]) // 2]
+    nearby_reports = [
+        report for report in upload_service.get_reports(False)
+        if distance_km(road_midpoint, report["location"]) <= 0.8
+    ]
+    observed_depth = round(sum(report["depth_cm"] for report in nearby_reports) / len(nearby_reports), 1) if nearby_reports else None
+    if observed_depth is None:
+        agreement_pct = 0.0
+        fused_depth = prediction["predicted_depth_cm"]
+        status = "NO_FIELD_EVIDENCE"
+    else:
+        difference = abs(observed_depth - prediction["predicted_depth_cm"])
+        agreement_pct = round(max(0.0, min(100.0, 100.0 - (difference / max(prediction["predicted_depth_cm"], 1.0) * 100.0))), 1)
+        fused_depth = round((prediction["predicted_depth_cm"] * 0.7) + (observed_depth * 0.3), 1)
+        status = "CONFIRMED" if agreement_pct >= 75.0 else ("REVIEW" if agreement_pct >= 50.0 else "DIVERGENCE")
+
+    return {
+        "location_id": road["id"],
+        "road_name": road["name"],
+        "model_depth_cm": prediction["predicted_depth_cm"],
+        "model_confidence_pct": prediction["confidence_pct"],
+        "observed_depth_cm": observed_depth,
+        "fused_depth_cm": fused_depth,
+        "nearby_report_count": len(nearby_reports),
+        "agreement_pct": agreement_pct,
+        "status": status,
+        "source_summary": "Nearby citizen and field reports within 800 m" if nearby_reports else "No nearby field reports available",
+    }
 
 def upload_custom_dataset(payload: CustomUploadPayload):
     """Processes the JSON MVP upload payload for direct callers and tests."""
@@ -1047,11 +1417,29 @@ def get_active_alerts(
             "drainage_effectiveness_pct": drainage["drainage_effectiveness_pct"],
         })
 
+    for alert in alerts:
+        workflow = ALERT_WORKFLOW.get(alert["id"], {"status": "NEW"})
+        alert["workflow_status"] = workflow["status"]
+        if workflow.get("updated_at"):
+            alert["workflow_updated_at"] = workflow["updated_at"]
+
     return {
         "timestamp": "Real-Time Broadcast",
         "active_alert_count": len(alerts),
         "alerts": alerts
     }
+
+
+@app.post("/api/alerts/workflow")
+def update_alert_workflow(req: AlertWorkflowRequest):
+    """Acknowledges or escalates a generated alert without changing its risk calculation."""
+    action = req.action.upper()
+    if action not in ["ACKNOWLEDGE", "ESCALATE"]:
+        raise HTTPException(status_code=400, detail="action must be ACKNOWLEDGE or ESCALATE")
+    status = "ACKNOWLEDGED" if action == "ACKNOWLEDGE" else "ESCALATED"
+    updated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    ALERT_WORKFLOW[req.alert_id] = {"status": status, "updated_at": updated_at}
+    return {"alert_id": req.alert_id, "workflow_status": status, "updated_at": updated_at}
 
 @app.get("/api/gis/layers")
 def get_gis_layers():

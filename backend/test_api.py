@@ -15,6 +15,14 @@ from app.main import (
     run_simulation,
     calculate_flood_aware_route,
     get_population_exposure,
+    get_evacuation_summary,
+    get_active_alerts,
+    get_observation_fusion,
+    update_alert_workflow,
+    AlertWorkflowRequest,
+    get_response_plan,
+    simulate_intervention,
+    InterventionRequest,
     search_location,
     submit_flood_report,
     get_flood_reports,
@@ -63,6 +71,7 @@ def test_blueprint_apis():
     pred = get_flood_prediction_for_location("ROAD-101", t=60, rain_mm=85.0, blockage_pct=0.0)
     assert pred["location_id"] == "ROAD-101"
     assert "predicted_depth_cm" in pred["prediction"]
+    assert pred["prediction"]["depth_lower_cm"] <= pred["prediction"]["predicted_depth_cm"] <= pred["prediction"]["depth_upper_cm"]
     assert "risk_level" in pred["prediction"]
     print(f"[PASS] /api/flood/prediction/ROAD-101 passed: Depth = {pred['prediction']['predicted_depth_cm']} cm, Level = {pred['prediction']['risk_level']}")
 
@@ -108,6 +117,43 @@ def test_blueprint_apis():
     assert expo["total_exposed_population"] > 0
     assert "evacuation_priority" in expo
     print(f"[PASS] /api/exposure passed: Total exposed = {expo['total_exposed_population']} citizens ({expo['exposure_percentage']}%), Priority = {expo['evacuation_priority']}")
+
+    print("\n--- 7b. Testing Evacuation & Shelter Planning ---")
+    evac = get_evacuation_summary(t=60, rain_mm=85.0, blockage_pct=0.0)
+    assert evac["evacuation_priority"] in ["CRITICAL", "HIGH", "ELEVATED"]
+    assert len(evac["shelters"]) >= 3
+    assert evac["recommended_shelter"]["name"]
+    print(f"[PASS] /api/evacuation/summary passed: {evac['evacuation_priority']} priority, {len(evac['shelters'])} shelters available")
+
+    print("\n--- 7e. Testing Model and Citizen Observation Fusion ---")
+    fusion = get_observation_fusion("ROAD-101", t=60, rain_mm=85.0, blockage_pct=0.0)
+    assert fusion["location_id"] == "ROAD-101"
+    assert fusion["fused_depth_cm"] >= 0
+    assert fusion["status"] in ["CONFIRMED", "REVIEW", "DIVERGENCE", "NO_FIELD_EVIDENCE"]
+    print(f"[PASS] /api/flood/fusion/ROAD-101 passed: status = {fusion['status']}, reports = {fusion['nearby_report_count']}")
+
+    print("\n--- 7f. Testing Alert Acknowledgement Workflow ---")
+    alert_snapshot = get_active_alerts(t=90, rain_mm=120.0, blockage_pct=40.0)
+    alert_id = alert_snapshot["alerts"][0]["id"]
+    workflow = update_alert_workflow(AlertWorkflowRequest(alert_id=alert_id, action="ACKNOWLEDGE"))
+    assert workflow["workflow_status"] == "ACKNOWLEDGED"
+    refreshed_alerts = get_active_alerts(t=90, rain_mm=120.0, blockage_pct=40.0)
+    refreshed = next(alert for alert in refreshed_alerts["alerts"] if alert["id"] == alert_id)
+    assert refreshed["workflow_status"] == "ACKNOWLEDGED"
+    print(f"[PASS] /api/alerts/workflow passed: {alert_id} acknowledged")
+
+    print("\n--- 7c. Testing AI Response Planner ---")
+    response_plan = get_response_plan(t=90, rain_mm=120.0, blockage_pct=40.0)
+    assert len(response_plan["actions"]) > 0
+    assert response_plan["actions"][0]["priority_score"] >= response_plan["actions"][-1]["priority_score"]
+    assert response_plan["total_population_protected"] > 0
+    print(f"[PASS] /api/operations/response-plan passed: {len(response_plan['actions'])} actions ranked")
+
+    print("\n--- 7d. Testing Intervention Impact Simulator ---")
+    intervention = simulate_intervention(InterventionRequest(rainfall_scenario_mm=120.0, blockage_percent=40.0, forecast_horizon_min=90, intervention_type="CLEAR_DRAIN"))
+    assert intervention["impact"]["retained_water_reduction_m3"] > 0
+    assert intervention["after"]["drainage_effectiveness_pct"] >= intervention["baseline"]["drainage_effectiveness_pct"]
+    print(f"[PASS] /api/simulation/intervention passed: {intervention['impact']['retained_water_reduction_m3']} m³ water saved")
 
     print("\n--- 8. Testing Section 27 User Location & Citizen Reports ---")
     locs = search_location("Kurla")
