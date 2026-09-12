@@ -18,6 +18,8 @@ import {
   CitizenReport,
   PopulationExposureResponse,
   UserLayer,
+  IndiaRiskPoint,
+  PlaceDetail,
 } from './types';
 import { Navigation, Sliders, Sparkles, Layers } from 'lucide-react';
 
@@ -44,23 +46,36 @@ export const App: React.FC = () => {
   const [predictData, setPredictData] = useState<FloodPredictResponse | null>(null);
   const [routeData, setRouteData] = useState<RouteCalculationResponse | null>(null);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [indiaRiskPoints, setIndiaRiskPoints] = useState<IndiaRiskPoint[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [mapStatus, setMapStatus] = useState<string | null>(null);
+  const [showDatasetPoints, setShowDatasetPoints] = useState<boolean>(true);
+  const [showFloodZones, setShowFloodZones] = useState<boolean>(true);
+  const [showSafeCorridors, setShowSafeCorridors] = useState<boolean>(true);
+  const [showEmergencyAssets, setShowEmergencyAssets] = useState<boolean>(true);
+  const [placeDetail, setPlaceDetail] = useState<PlaceDetail | null>(null);
 
   // Fetch flood predictions (Section 21)
   const fetchPredictions = async () => {
+    setLoading(true);
     try {
       const res = await fetch(
-        `/api/flood/predict?t=${horizonMin}&rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`
+        `/api/flood/risk-map?t=${horizonMin}&rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`
       );
-      if (res.ok) {
-        const data = await res.json();
-        setPredictData(data);
-        if (selectedRoad) {
-          const updated = data.roads.find((r: RoadPrediction) => r.road_id === selectedRoad.road_id);
-          if (updated) setSelectedRoad(updated);
-        }
+      if (!res.ok) throw new Error(`Risk API returned ${res.status}`);
+      const data = await res.json();
+      setPredictData(data);
+      setApiError(null);
+      if (selectedRoad) {
+        const updated = data.roads.find((r: RoadPrediction) => r.road_id === selectedRoad.road_id);
+        if (updated) setSelectedRoad(updated);
       }
     } catch (err) {
       console.error('Error fetching flood predictions:', err);
+      setApiError('Unable to load flood intelligence. Check that the backend is running, then retry.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -144,8 +159,26 @@ export const App: React.FC = () => {
     }
   };
 
+  const fetchIndiaOverview = async () => {
+    try {
+      const res = await fetch(`/api/india/risk-overview?rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`);
+      if (res.ok) setIndiaRiskPoints((await res.json()).points || []);
+    } catch (err) {
+      console.error('Error fetching India-wide overview:', err);
+    }
+  };
+
+  const fetchPlaceDetail = async () => {
+    try {
+      const res = await fetch(`/api/place/detail?city=Mumbai&rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`);
+      if (res.ok) setPlaceDetail(await res.json());
+    } catch (err) {
+      console.error('Error fetching Mumbai operational layers:', err);
+    }
+  };
+
   useEffect(() => {
-    Promise.all([fetchPredictions(), fetchRoute(), fetchExposure(), fetchAlerts(), fetchReports(), fetchLayers()]);
+    Promise.all([fetchPredictions(), fetchRoute(), fetchExposure(), fetchAlerts(), fetchReports(), fetchLayers(), fetchIndiaOverview(), fetchPlaceDetail()]);
   }, [horizonMin, rainScenarioMm, blockagePct, selectedVehicle]);
 
   // Section 27.1: Geolocation Handler
@@ -283,9 +316,9 @@ export const App: React.FC = () => {
       )}
 
       {/* Center Layout: Map + Side Control Panels */}
-      <div className="flex-1 flex flex-col md:flex-row relative overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row relative overflow-y-auto overflow-x-hidden">
         {/* Interactive GIS Map Area */}
-        <div className="flex-1 flex flex-col relative h-full">
+        <div className="flex-1 min-w-0 min-h-[560px] lg:min-h-0 flex flex-col relative h-[62vh] lg:h-full">
           {predictData ? (
             <FloodMap
               roads={predictData.roads}
@@ -308,10 +341,40 @@ export const App: React.FC = () => {
               onToggleDrainage={() => setShowDrainage(!showDrainage)}
               onToggleCitizenReports={() => setShowCitizenPins(!showCitizenPins)}
               flyToCoords={flyToCoords}
+              indiaRiskPoints={indiaRiskPoints}
+              onMapStatusChange={setMapStatus}
+              showDatasetPoints={showDatasetPoints}
+              onToggleDatasetPoints={() => setShowDatasetPoints((visible) => !visible)}
+              placeDetail={placeDetail}
+              showFloodZones={showFloodZones}
+              showSafeCorridors={showSafeCorridors}
+              showEmergencyAssets={showEmergencyAssets}
+              onToggleFloodZones={() => setShowFloodZones((visible) => !visible)}
+              onToggleSafeCorridors={() => setShowSafeCorridors((visible) => !visible)}
+              onToggleEmergencyAssets={() => setShowEmergencyAssets((visible) => !visible)}
             />
           ) : (
-            <div className="flex-1 flex items-center justify-center text-slate-500">
-              Initializing Pilot Urban Twin...
+            <div className="flex-1 flex items-center justify-center bg-slate-950 p-6">
+              <div className="max-w-md rounded-xl border border-red-500/30 bg-red-950/30 p-5 text-center shadow-xl">
+                <h2 className="text-base font-bold text-red-200">Flood data unavailable</h2>
+                <p className="mt-2 text-xs text-slate-300">
+                  {loading ? 'Connecting to the FLOOD-X decision engine...' : apiError}
+                </p>
+                {!loading && (
+                  <button
+                    onClick={fetchPredictions}
+                    className="mt-4 rounded-lg bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-300"
+                  >
+                    Retry connection
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {mapStatus && (
+            <div className="pointer-events-none absolute bottom-24 left-4 z-40 max-w-sm rounded-lg border border-amber-400/40 bg-slate-950/90 px-3 py-2 text-xs text-amber-200 shadow-xl">
+              {mapStatus}
             </div>
           )}
 
@@ -325,16 +388,18 @@ export const App: React.FC = () => {
 
         {/* Selected Road Detail Inspector (Section 21) */}
         {selectedRoad && (
-          <StreetDetailPanel
+          <div className="w-full lg:w-96 shrink-0">
+            <StreetDetailPanel
             road={selectedRoad}
             onClose={() => setSelectedRoad(null)}
             timelineCurve={predictData?.timeline_projections[selectedRoad.road_id]}
-          />
+            />
+          </div>
         )}
 
         {/* Prediction vs Field Report Comparison Card (Section 27.8) */}
         {selectedReport && (
-          <div className="w-full md:w-96 p-3 bg-slate-900 border-l border-slate-800 shadow-2xl z-40 overflow-y-auto">
+          <div className="w-full lg:w-96 shrink-0 p-3 bg-slate-900 border-l border-slate-800 shadow-2xl z-40 overflow-y-auto">
             <PredictionComparisonCard
               report={selectedReport}
               road={predictData?.roads[0] || null}
@@ -345,7 +410,7 @@ export const App: React.FC = () => {
 
         {/* Right Sidebar Control Deck */}
         {!selectedRoad && !selectedReport && (
-          <div className="w-full md:w-96 bg-slate-900/95 border-l border-slate-800 flex flex-col shadow-2xl z-30 overflow-y-auto">
+          <div className="w-full lg:w-96 shrink-0 bg-slate-900/95 border-l border-slate-800 flex flex-col shadow-2xl z-30 overflow-y-auto">
             {/* Sidebar Tabs */}
             <div className="flex border-b border-slate-800 bg-slate-950/60 p-1">
               <button

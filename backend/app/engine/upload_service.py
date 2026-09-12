@@ -67,7 +67,7 @@ class UploadService:
             loc for loc in LANDMARKS
             if q in loc["name"].lower() or q in loc["address"].lower() or q in loc.get("pin", "")
         ]
-        return matches or LANDMARKS[:3]
+        return matches
 
     # --- Citizen Flood Reporting (Section 27.3) ---
     def submit_report(self, report_data: Dict[str, Any]) -> Dict[str, Any]:

@@ -27,6 +27,7 @@ export const DataUploadModal: React.FC<DataUploadModalProps> = ({
   const [datasetName, setDatasetName] = useState<string>('Kurla Ward Drainage Survey');
   const [dataType, setDataType] = useState<string>('drainage');
   const [fileContent, setFileContent] = useState<string>(SAMPLE_DRAINAGE_CSV);
+  const [fileName, setFileName] = useState<string>('drainage-survey.csv');
   const [uploadStatus, setUploadStatus] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [applied, setApplied] = useState<boolean>(false);
@@ -36,15 +37,14 @@ export const DataUploadModal: React.FC<DataUploadModalProps> = ({
   const handleValidateAndUpload = async () => {
     setLoading(true);
     try {
+      const formData = new FormData();
+      formData.append('dataset_name', datasetName);
+      formData.append('data_type', dataType);
+      formData.append('source', 'Municipal Field Team');
+      formData.append('file', new File([fileContent], fileName, { type: 'text/csv' }));
       const res = await fetch('/api/upload/data', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dataset_name: datasetName,
-          data_type: dataType,
-          file_content: fileContent,
-          source: 'Municipal Field Team'
-        }),
+        body: formData,
       });
       if (res.ok) {
         const data = await res.json();
@@ -86,8 +86,8 @@ export const DataUploadModal: React.FC<DataUploadModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-[1000] isolate flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+      <div className="relative z-[1001] bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-800/40">
           <div className="flex items-center gap-2">
@@ -168,8 +168,21 @@ export const DataUploadModal: React.FC<DataUploadModalProps> = ({
           {/* File Content / Editor */}
           <div>
             <label className="text-xs font-semibold text-slate-300 block mb-1">
-              File Content (CSV or GeoJSON with lat, lon):
+              Dataset file (CSV or GeoJSON with lat, lon):
             </label>
+            <input
+              type="file"
+              accept=".csv,.json,.geojson"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setFileName(file.name);
+                const reader = new FileReader();
+                reader.onload = () => setFileContent(String(reader.result || ''));
+                reader.readAsText(file);
+              }}
+              className="w-full mb-2 text-xs text-slate-300 file:mr-3 file:rounded file:border-0 file:bg-cyan-500/20 file:px-3 file:py-1.5 file:text-cyan-300 hover:file:bg-cyan-500/30"
+            />
             <textarea
               value={fileContent}
               onChange={(e) => setFileContent(e.target.value)}

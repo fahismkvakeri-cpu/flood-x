@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
-import { RoadPrediction, RouteCalculationResponse, DrainageSimulation, CitizenReport } from '../types';
+import { RoadPrediction, RouteCalculationResponse, DrainageSimulation, CitizenReport, IndiaRiskPoint, PlaceDetail } from '../types';
 
 interface FloodMapProps {
   roads: RoadPrediction[];
@@ -17,6 +17,17 @@ interface FloodMapProps {
   onToggleDrainage: () => void;
   onToggleCitizenReports: () => void;
   flyToCoords?: [number, number] | null;
+  indiaRiskPoints: IndiaRiskPoint[];
+  onMapStatusChange: (status: string | null) => void;
+  showDatasetPoints: boolean;
+  onToggleDatasetPoints: () => void;
+  placeDetail: PlaceDetail | null;
+  showFloodZones: boolean;
+  showSafeCorridors: boolean;
+  showEmergencyAssets: boolean;
+  onToggleFloodZones: () => void;
+  onToggleSafeCorridors: () => void;
+  onToggleEmergencyAssets: () => void;
 }
 
 export const FloodMap: React.FC<FloodMapProps> = ({
@@ -34,6 +45,17 @@ export const FloodMap: React.FC<FloodMapProps> = ({
   onToggleDrainage,
   onToggleCitizenReports,
   flyToCoords,
+  indiaRiskPoints,
+  onMapStatusChange,
+  showDatasetPoints,
+  onToggleDatasetPoints,
+  placeDetail,
+  showFloodZones,
+  showSafeCorridors,
+  showEmergencyAssets,
+  onToggleFloodZones,
+  onToggleSafeCorridors,
+  onToggleEmergencyAssets,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -42,28 +64,44 @@ export const FloodMap: React.FC<FloodMapProps> = ({
   const reportLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const userLocLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const routeLayerGroupRef = useRef<L.LayerGroup | null>(null);
+  const operationalLayerGroupRef = useRef<L.LayerGroup | null>(null);
 
   // Initialize Leaflet Map
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
 
     const map = L.map(mapContainerRef.current, {
-      center: [19.0690, 72.8720],
-      zoom: 14,
+      center: [22.5, 79.0],
+      zoom: 5,
       zoomControl: true,
       attributionControl: false,
     });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    const tileUrl = import.meta.env.VITE_MAP_TILE_URL || 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
+    const fallbackTileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    let usingFallbackTiles = false;
+    const tiles = L.tileLayer(tileUrl, {
       maxZoom: 19,
       subdomains: 'abcd',
+      attribution: '&copy; Esri, OpenStreetMap contributors',
     }).addTo(map);
+    tiles.on('tileerror', () => {
+      if (!usingFallbackTiles) {
+        usingFallbackTiles = true;
+        tiles.setUrl(fallbackTileUrl);
+        onMapStatusChange('Primary map tiles failed. Switched to OpenStreetMap tiles.');
+      } else {
+        onMapStatusChange('Map tiles are unavailable. Risk observations remain visible.');
+      }
+    });
+    tiles.on('load', () => onMapStatusChange(null));
 
     roadLayerGroupRef.current = L.layerGroup().addTo(map);
     drainageLayerGroupRef.current = L.layerGroup().addTo(map);
     reportLayerGroupRef.current = L.layerGroup().addTo(map);
     userLocLayerGroupRef.current = L.layerGroup().addTo(map);
     routeLayerGroupRef.current = L.layerGroup().addTo(map);
+    operationalLayerGroupRef.current = L.layerGroup().addTo(map);
 
     mapInstanceRef.current = map;
 
@@ -72,6 +110,46 @@ export const FloodMap: React.FC<FloodMapProps> = ({
       mapInstanceRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    const nationalLayer = L.layerGroup().addTo(mapInstanceRef.current);
+    indiaRiskPoints.filter((point) => showDatasetPoints || !point.id.startsWith('INDIA-DATA-')).forEach((point) => {
+      const color = point.risk_level === 'Critical' ? '#ef4444' : point.risk_level === 'High' ? '#f97316' : '#f59e0b';
+      const isDatasetPoint = point.id.startsWith('INDIA-DATA-');
+      L.circleMarker(point.coords, { radius: isDatasetPoint ? 5 : 10, color: '#fff', weight: isDatasetPoint ? 1 : 2, fillColor: color, fillOpacity: 0.85 })
+        .bindTooltip(`<strong>${point.name}</strong><br/>${point.risk_level} risk · ${point.predicted_depth_cm} cm projected depth${point.rainfall_mm ? `<br/>Rainfall: ${point.rainfall_mm} mm` : ''}${point.land_cover ? `<br/>Land cover: ${point.land_cover}` : ''}`)
+        .addTo(nationalLayer);
+    });
+    return () => { nationalLayer.remove(); };
+  }, [indiaRiskPoints, showDatasetPoints]);
+
+  useEffect(() => {
+    if (!operationalLayerGroupRef.current) return;
+    operationalLayerGroupRef.current.clearLayers();
+    if (!placeDetail) return;
+    if (showFloodZones) {
+      placeDetail.flood_zones.forEach((zone) => {
+        L.polygon(zone.coordinates, { color: '#ef4444', weight: 2, fillColor: '#dc2626', fillOpacity: 0.22 })
+          .bindTooltip(`<strong>Flood zone: ${zone.name}</strong><br/>${zone.risk_level} · ${zone.depth_cm} cm projected depth`)
+          .addTo(operationalLayerGroupRef.current!);
+      });
+    }
+    if (showSafeCorridors) {
+      placeDetail.safe_corridors.forEach((corridor) => {
+        L.polyline(corridor.coordinates, { color: '#22c55e', weight: 8, opacity: 0.9, dashArray: '2, 8' })
+          .bindTooltip(`<strong>Safe corridor: ${corridor.name}</strong><br/>Emergency access priority`)
+          .addTo(operationalLayerGroupRef.current!);
+      });
+    }
+    if (showEmergencyAssets) {
+      placeDetail.emergency_assets.forEach((asset) => {
+        L.marker(asset.coords, { title: asset.name })
+          .bindTooltip(`<strong>${asset.name}</strong><br/>${asset.type}`)
+          .addTo(operationalLayerGroupRef.current!);
+      });
+    }
+  }, [placeDetail, showFloodZones, showSafeCorridors, showEmergencyAssets]);
 
   // Handle Pan / FlyTo
   useEffect(() => {
@@ -256,6 +334,11 @@ export const FloodMap: React.FC<FloodMapProps> = ({
       {/* Map Container */}
       <div ref={mapContainerRef} className="w-full h-full" />
 
+      <div className="absolute top-4 left-4 z-20 rounded-lg border border-cyan-500/30 bg-slate-950/85 px-3 py-2 text-xs shadow-lg backdrop-blur">
+        <div className="font-bold text-cyan-300">India-wide flood overview</div>
+        <div className="text-[10px] text-slate-400">Select a city or search any Indian place for local context</div>
+      </div>
+
       {/* Layer Control Pills (Top Right) */}
       <div className="absolute top-4 right-4 z-20 flex flex-col gap-2">
         <button
@@ -268,6 +351,28 @@ export const FloodMap: React.FC<FloodMapProps> = ({
         >
           <span className={`w-2 h-2 rounded-full ${showDrainageLayer ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
           <span>Drainage Graph</span>
+        </button>
+
+        <button
+          onClick={onToggleDatasetPoints}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold backdrop-blur shadow-lg border transition flex items-center gap-1.5 ${
+            showDatasetPoints
+              ? 'bg-orange-500/20 text-orange-300 border-orange-500/50'
+              : 'bg-slate-900/80 text-slate-400 border-slate-700/60 hover:text-white'
+          }`}
+        >
+          <span className={`w-2 h-2 rounded-full ${showDatasetPoints ? 'bg-orange-400' : 'bg-slate-500'}`} />
+          <span>Dataset Points</span>
+        </button>
+
+        <button onClick={onToggleFloodZones} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-500/20 text-red-300 border border-red-500/50">
+          <span>Flood Zones {showFloodZones ? 'ON' : 'OFF'}</span>
+        </button>
+        <button onClick={onToggleSafeCorridors} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50">
+          <span>Safe Roads {showSafeCorridors ? 'ON' : 'OFF'}</span>
+        </button>
+        <button onClick={onToggleEmergencyAssets} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/50">
+          <span>Emergency Assets {showEmergencyAssets ? 'ON' : 'OFF'}</span>
         </button>
 
         <button
@@ -284,9 +389,9 @@ export const FloodMap: React.FC<FloodMapProps> = ({
       </div>
 
       {/* Section 8 Baseline Risk Legend */}
-      <div className="absolute bottom-6 left-6 z-20 bg-slate-900/90 backdrop-blur-md p-3 rounded-lg border border-slate-800 text-xs shadow-xl space-y-1.5 pointer-events-auto">
+      <div className="absolute top-16 left-4 z-[2000] bg-slate-950 border border-slate-500 p-3 rounded-lg text-xs shadow-2xl space-y-1.5 pointer-events-auto ring-2 ring-slate-950/90">
         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-          Section 8: Baseline Risk Levels
+          Flood risk legend
         </span>
         <div className="flex items-center gap-2">
           <span className="w-3 h-1.5 rounded bg-emerald-500" />

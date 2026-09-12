@@ -17,6 +17,9 @@ PILOT_ZONE = {
     "roads_source": "OpenStreetMap + Overpass API"
 }
 
+EXTERNAL_WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
+EXTERNAL_WEATHER_TIMEOUT_SECONDS = 4
+
 TIMELINE_STEPS = [0, 15, 30, 60, 90, 120, 180]  # minutes from now
 
 # Section 8: Baseline Flood-Risk Model Weights (Prototype Standardized)

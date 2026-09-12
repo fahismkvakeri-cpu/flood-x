@@ -202,3 +202,26 @@ export interface LandmarkLocation {
   coords: [number, number];
   pin: string;
 }
+
+export interface IndiaRiskPoint {
+  id: string;
+  name: string;
+  coords: [number, number];
+  risk_score_norm: number;
+  risk_level: 'Medium' | 'High' | 'Critical';
+  predicted_depth_cm: number;
+  source: string;
+  rainfall_mm?: number;
+  water_level_m?: number;
+  land_cover?: string;
+  flood_occurred?: boolean;
+}
+
+export interface PlaceDetail {
+  city: string;
+  status: string;
+  pilot_area?: string;
+  flood_zones: { id: string; name: string; risk_level: string; depth_cm: number; coordinates: [number, number][] }[];
+  safe_corridors: { id: string; name: string; risk_level: string; coordinates: [number, number][] }[];
+  emergency_assets: { id: string; name: string; type: string; coords: [number, number] }[];
+}
