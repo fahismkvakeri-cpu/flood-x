@@ -17,6 +17,12 @@ export interface RoadPrediction {
   flood_duration_hrs: number;
   drain_utilization_pct: number;
   drain_status: string;
+  drainage_area_id: string | null;
+  drainage_area_name: string;
+  drainage_water_level_cm: number;
+  drainage_retained_volume_m3: number;
+  drainage_effectiveness_pct: number;
+  drainage_level_status: string;
   confidence_pct: number;
   is_closed: boolean;
   explainability: Record<string, number>;
@@ -42,6 +48,13 @@ export interface DrainageNode {
   coords: [number, number];
   elevation: number;
   inflow_m3s: number;
+  total_inflow_m3s: number;
+  conveyed_flow_m3s: number;
+  retained_flow_m3s: number;
+  retained_volume_m3: number;
+  estimated_water_level_cm: number;
+  drainage_effectiveness_pct: number;
+  level_status: string;
   is_surcharged: boolean;
   status: string;
 }
@@ -52,6 +65,13 @@ export interface DrainageSimulation {
   surcharged_pipes: string[];
   blockage_pct: number;
   total_surcharge_volume_m3: number;
+  generated_runoff_m3: number;
+  retained_floodwater_m3: number;
+  max_estimated_water_level_cm: number;
+  drainage_effectiveness_pct: number;
+  water_level_rising: boolean;
+  water_level_rising_nodes: string[];
+  effectiveness_status: string;
   pipes: DrainagePipe[];
   nodes: Record<string, DrainageNode>;
 }
@@ -122,6 +142,7 @@ export interface RouteCalculationResponse {
     risk_penalty_factor: number;
   };
   forecast_horizon_min: number;
+  routing_source?: string;
   normal_route: RouteSummary | null;
   recommended_route: RouteSummary | null;
   summary: {
@@ -208,10 +229,14 @@ export interface IndiaRiskPoint {
   name: string;
   coords: [number, number];
   risk_score_norm: number;
-  risk_level: 'Medium' | 'High' | 'Critical';
+  risk_level: 'Low' | 'Medium' | 'High' | 'Critical';
   predicted_depth_cm: number;
   source: string;
   rainfall_mm?: number;
+  elevation_m?: number;
+  river_discharge_m3s?: number;
+  soil_type?: string;
+  population_density?: number;
   water_level_m?: number;
   land_cover?: string;
   flood_occurred?: boolean;

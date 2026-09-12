@@ -5,6 +5,7 @@ High-risk and inundated roads become expensive or impassable to traverse.
 Runs dynamic Dijkstra / A* to calculate both normal shortest route and FLOOD-X safe route.
 """
 import math
+import heapq
 import networkx as nx
 from typing import Dict, List, Any, Optional
 from ..config import VEHICLE_PROFILES
@@ -14,6 +15,37 @@ from .flood_ml_model import flood_ml_model
 class EmergencyRoutingEngine:
     def __init__(self):
         pass
+
+    def find_nearest_node(
+        self,
+        latitude: float,
+        longitude: float,
+        prefer_highway: bool = False,
+        max_distance_km: Optional[float] = None,
+    ) -> Optional[str]:
+        """Find the nearest supported junction and optionally enforce a coverage radius."""
+        if not JUNCTIONS:
+            return None
+
+        def distance_km(a, b):
+            lat1, lon1 = a
+            lat2, lon2 = b
+            return math.hypot((lat2 - lat1) * 111.0, (lon2 - lon1) * 111.0)
+
+        candidates = []
+        for node_id, data in JUNCTIONS.items():
+            node_coords = data["coords"]
+            metric = distance_km((latitude, longitude), tuple(node_coords))
+            if prefer_highway and "SCLR" in data["name"]:
+                metric *= 0.7
+            candidates.append((metric, node_id))
+
+        if not candidates:
+            return None
+        distance_km, node_id = min(candidates, key=lambda x: x[0])
+        if max_distance_km is not None and distance_km > max_distance_km:
+            return None
+        return node_id
 
     def build_network_graph(self, road_predictions: List[Dict[str, Any]], speed_mps: float = 2.5) -> nx.Graph:
         """Constructs an undirected street network graph annotated with real-time flood conditions."""
@@ -49,6 +81,45 @@ class EmergencyRoutingEngine:
 
         return g
 
+    def _a_star_route(self, graph: nx.Graph, start: str, goal: str, weight: str = "safe_cost") -> Optional[List[str]]:
+        """A* route planner using Euclidean heuristic to prioritize lower-risk, lower-depth corridors."""
+        if start not in graph or goal not in graph:
+            return None
+
+        def heuristic(node: str) -> float:
+            node_coords = graph.nodes[node].get("coords", [0.0, 0.0])
+            goal_coords = graph.nodes[goal].get("coords", [0.0, 0.0])
+            return math.hypot((node_coords[0] - goal_coords[0]) * 111.0, (node_coords[1] - goal_coords[1]) * 111.0)
+
+        open_heap: List[tuple] = []
+        heapq.heappush(open_heap, (0.0, 0.0, start))
+        g_score = {start: 0.0}
+        parent = {start: None}
+
+        while open_heap:
+            _, _, current = heapq.heappop(open_heap)
+            if current == goal:
+                break
+            for neighbor in graph.neighbors(current):
+                edge = graph[current][neighbor]
+                tentative = g_score[current] + edge.get(weight, edge.get("base_time_sec", 1.0))
+                if tentative < g_score.get(neighbor, float('inf')):
+                    parent[neighbor] = current
+                    g_score[neighbor] = tentative
+                    f_score = tentative + heuristic(neighbor)
+                    heapq.heappush(open_heap, (f_score, tentative, neighbor))
+
+        if goal not in g_score:
+            return None
+
+        path = []
+        cur = goal
+        while cur is not None:
+            path.append(cur)
+            cur = parent[cur]
+        path.reverse()
+        return path if path and path[0] == start else None
+
     def calculate_routes(
         self,
         origin_id: str = "J_ASIAN_HEART",
@@ -59,7 +130,6 @@ class EmergencyRoutingEngine:
         blockage_pct: float = 0.0
     ) -> Dict[str, Any]:
         """Calculates standard shortest route vs FLOOD-X flood-safe route matching Section 10."""
-        # Get active flood state
         flood_state = flood_ml_model.predict_all(t_minutes, rainfall_scenario_mm, blockage_pct)
 
         profile = VEHICLE_PROFILES.get(vehicle_type, VEHICLE_PROFILES["AMBULANCE"])
@@ -69,38 +139,32 @@ class EmergencyRoutingEngine:
 
         g = self.build_network_graph(flood_state["roads"], speed_mps)
 
-        # 1. Standard / Normal Shortest Route (distance / baseline time only, blind to flooding)
         try:
             normal_path = nx.shortest_path(g, source=origin_id, target=destination_id, weight="base_time_sec")
             normal_route_info = self._summarize_path(g, normal_path, wading_limit)
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             normal_route_info = None
 
-        # 2. Section 10: Flood-Safe Recommended Route
-        # cost = distance * (1 + flood_risk * penalty)
         safe_g = g.copy()
-        for u, v, data in safe_g.edges(data=True):
+        for u, v, data in list(safe_g.edges(data=True)):
             depth = data["depth_cm"]
             risk_norm = data["risk_score_norm"]
             length_m = data["length_m"]
-
-            # Sever edge if water depth exceeds vehicle wading clearance
-            if depth >= wading_limit:
-                data["safe_cost"] = 1e9  # impassable hazard
+            if depth >= wading_limit or data["is_closed"]:
+                safe_g.remove_edge(u, v)
             else:
-                # Blueprint Section 10 Cost Formulation
                 cost = length_m * (1.0 + (risk_norm * risk_penalty))
-                # Add depth resistance penalty
                 cost *= (1.0 + (depth / 15.0) * 1.2)
                 data["safe_cost"] = cost
 
         try:
-            safe_path = nx.shortest_path(safe_g, source=origin_id, target=destination_id, weight="safe_cost")
+            safe_path = self._a_star_route(safe_g, origin_id, destination_id, weight="safe_cost")
+            if safe_path is None:
+                safe_path = nx.shortest_path(safe_g, source=origin_id, target=destination_id, weight="safe_cost")
             safe_route_info = self._summarize_path(safe_g, safe_path, wading_limit)
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             safe_route_info = None
 
-        # Compare avoided flooded segments
         normal_flooded = normal_route_info.get("flooded_segments_count", 0) if normal_route_info else 0
         safe_flooded = safe_route_info.get("flooded_segments_count", 0) if safe_route_info else 0
         avoided_count = max(0, normal_flooded - safe_flooded)
@@ -110,6 +174,7 @@ class EmergencyRoutingEngine:
             "destination": {"id": destination_id, "name": JUNCTIONS[destination_id]["name"], "coords": JUNCTIONS[destination_id]["coords"]},
             "vehicle_profile": profile,
             "forecast_horizon_min": t_minutes,
+            "routing_source": "FLOOD-X dynamic A* flood-weighted road graph",
             "normal_route": normal_route_info,
             "recommended_route": safe_route_info,
             "summary": {

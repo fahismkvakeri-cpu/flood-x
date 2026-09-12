@@ -7,6 +7,16 @@ import csv
 import io
 import time
 from typing import Dict, List, Any, Optional
+from ..database import (
+    deactivate_layer,
+    get_upload,
+    initialize_database,
+    insert_report,
+    list_layers,
+    list_reports,
+    save_layer,
+    save_upload,
+)
 
 # Searchable Landmarks in Mumbai Pilot Zone
 LANDMARKS = [
@@ -22,10 +32,9 @@ LANDMARKS = [
 
 class UploadService:
     def __init__(self):
-        # In-memory stores for MVP
-        self.uploads: Dict[str, Dict[str, Any]] = {}
-        self.user_layers: List[Dict[str, Any]] = []
-        self.citizen_reports: List[Dict[str, Any]] = [
+        initialize_database()
+        if not list_reports():
+            seed_reports = [
             # Seeded initial verified observation (matching PRD Section 27.3 example)
             {
                 "id": "REPORT-001",
@@ -55,7 +64,9 @@ class UploadService:
                 "verified": True,
                 "reporter_type": "Citizen"
             }
-        ]
+            ]
+            for report in seed_reports:
+                insert_report(report)
 
     # --- User Location (Section 27.1) ---
     def search_locations(self, query: str) -> List[Dict[str, Any]]:
@@ -96,7 +107,7 @@ class UploadService:
             "verified": False,
             "reporter_type": report_data.get("reporter_type", "Citizen")
         }
-        self.citizen_reports.insert(0, report)
+        insert_report(report)
         return {
             "status": "SUCCESS",
             "message": "Citizen flood report submitted successfully. Pinned to live map layer.",
@@ -106,8 +117,8 @@ class UploadService:
     def get_reports(self, verified_only: bool = False) -> List[Dict[str, Any]]:
         """Returns verified or all citizen flood reports."""
         if verified_only:
-            return [r for r in self.citizen_reports if r["verified"]]
-        return self.citizen_reports
+            return list_reports(verified_only=True)
+        return list_reports()
 
     # --- Custom Data Upload Pipeline (Section 27.4 & 27.5) ---
     def process_upload(
@@ -186,7 +197,7 @@ class UploadService:
             "features": parsed_features,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")
         }
-        self.uploads[upload_id] = upload_entry
+        save_upload(upload_entry)
 
         return {
             "upload_id": upload_id,
@@ -200,7 +211,7 @@ class UploadService:
 
     def get_upload_preview(self, upload_id: str) -> Dict[str, Any]:
         """Stage 2: Preview uploaded dataset."""
-        upl = self.uploads.get(upload_id)
+        upl = get_upload(upload_id)
         if not upl:
             return {"error": f"Upload {upload_id} not found"}
         return {
@@ -214,7 +225,7 @@ class UploadService:
 
     def apply_upload(self, upload_id: str) -> Dict[str, Any]:
         """Stage 3: Approve and inject valid dataset into active user layers."""
-        upl = self.uploads.get(upload_id)
+        upl = get_upload(upload_id)
         if not upl:
             return {"error": f"Upload {upload_id} not found"}
         
@@ -228,7 +239,7 @@ class UploadService:
             "active": True,
             "applied_at": time.strftime("%Y-%m-%dT%H:%M:%S")
         }
-        self.user_layers.append(layer)
+        save_layer(layer)
         return {
             "status": "APPLIED",
             "message": f"Dataset '{layer['name']}' successfully applied to FLOOD-X digital twin.",
@@ -238,11 +249,11 @@ class UploadService:
 
     def get_user_layers(self) -> List[Dict[str, Any]]:
         """Returns all active user-uploaded layers."""
-        return self.user_layers
+        return list_layers()
 
     def delete_user_layer(self, layer_id: str) -> Dict[str, Any]:
         """Removes an uploaded custom layer."""
-        self.user_layers = [l for l in self.user_layers if l["id"] != layer_id]
+        deactivate_layer(layer_id)
         return {"status": "DELETED", "layer_id": layer_id}
 
 upload_service = UploadService()

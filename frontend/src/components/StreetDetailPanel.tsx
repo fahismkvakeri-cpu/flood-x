@@ -110,6 +110,23 @@ export const StreetDetailPanel: React.FC<StreetDetailPanelProps> = ({
               style={{ width: `${Math.min(100, road.drain_utilization_pct)}%` }}
             />
           </div>
+          <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-700/50 text-xs">
+            <div>
+              <span className="text-slate-500 block">Area water level</span>
+              <span className={`font-bold ${road.drainage_water_level_cm >= 15 ? 'text-red-400' : 'text-cyan-300'}`}>
+                {road.drainage_water_level_cm} cm
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Drain effectiveness</span>
+              <span className={`font-bold ${road.drainage_effectiveness_pct >= 85 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                {road.drainage_effectiveness_pct}%
+              </span>
+            </div>
+          </div>
+          <div className="text-[11px] text-slate-400">
+            {road.drainage_area_name} · {road.drainage_level_status.replace(/_/g, ' ')} · {road.drainage_retained_volume_m3} m³ retained
+          </div>
         </div>
 
         {/* Temporal Inundation Curve */}

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Sliders, CloudRain, ShieldAlert, RefreshCw } from 'lucide-react';
+import { DrainageSimulation } from '../types';
 
 interface WhatIfSimulatorProps {
   rainfallScenarioMm: number;
@@ -7,6 +8,7 @@ interface WhatIfSimulatorProps {
   blockagePct: number;
   onBlockageChange: (val: number) => void;
   onReset: () => void;
+  drainage?: DrainageSimulation | null;
 }
 
 const RAIN_PRESETS = [50, 80, 100, 150];
@@ -18,6 +20,7 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({
   blockagePct,
   onBlockageChange,
   onReset,
+  drainage,
 }) => {
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl space-y-4">
@@ -116,6 +119,26 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({
         <span className="text-cyan-400 font-bold">⚡ Digital Twin Live:</span>
         <span>Runoff hydraulics and inundation maps adapt in sub-second time.</span>
       </div>
+
+      {drainage && (
+        <div className="border-t border-slate-800 pt-3 space-y-2 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-400">Network effectiveness</span>
+            <span className={`font-bold ${drainage.effectiveness_status === 'EFFECTIVE' ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {drainage.drainage_effectiveness_pct}% · {drainage.effectiveness_status.replace(/_/g, ' ')}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-slate-400">
+            <span>Retained floodwater</span>
+            <span className="font-semibold text-white">{drainage.retained_floodwater_m3} m³</span>
+          </div>
+          <div className={`rounded border px-2 py-1.5 ${drainage.water_level_rising ? 'border-red-500/40 bg-red-950/30 text-red-300' : 'border-emerald-500/30 bg-emerald-950/20 text-emerald-300'}`}>
+            {drainage.water_level_rising
+              ? `Water level rising in ${drainage.water_level_rising_nodes.length} area(s); max ${drainage.max_estimated_water_level_cm} cm.`
+              : 'No modeled area-level water accumulation.'}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

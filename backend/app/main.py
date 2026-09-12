@@ -3,6 +3,7 @@ import os
 import time
 import json
 import csv
+import math
 from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest, urlopen
 from pathlib import Path
@@ -27,6 +28,7 @@ from .engine.flood_ml_model import flood_ml_model
 from .engine.emergency_routing import emergency_router
 from .engine.exposure_engine import exposure_engine
 from .engine.upload_service import upload_service
+from .database import get_upload
 
 INDIA_RISK_CITIES = [
     ("Mumbai", 19.0760, 72.8777, 0.88),
@@ -47,11 +49,13 @@ INDIA_DATASET_PATH = Path(__file__).resolve().parents[2] / "flood_risk_dataset_i
 _india_dataset_cache: Optional[Dict[str, Any]] = None
 
 INDIA_MAINLAND_MASK = [
-    (8.0, 77.5), (8.5, 76.0), (10.5, 74.2), (14.0, 73.0),
-    (18.0, 72.5), (21.0, 69.0), (25.0, 68.0), (29.0, 70.0),
-    (35.0, 72.0), (37.0, 77.0), (35.0, 81.0), (32.0, 84.0),
-    (29.0, 88.0), (28.0, 92.0), (26.0, 95.0), (23.0, 94.0),
-    (21.0, 90.0), (19.0, 85.0), (16.0, 82.0), (12.0, 80.0),
+    (8.0, 77.5), (8.8, 76.2), (10.5, 75.0), (13.0, 74.2),
+    (16.0, 73.4), (18.5, 72.7), (20.5, 70.8), (23.0, 68.8),
+    (26.0, 68.2), (29.0, 70.0), (32.0, 73.0), (35.0, 76.0),
+    (37.0, 77.5), (35.0, 80.0), (32.0, 82.5), (30.0, 85.0),
+    (28.0, 88.0), (27.0, 91.5), (25.0, 94.0), (23.0, 93.0),
+    (21.5, 90.0), (20.0, 87.0), (18.0, 84.5), (16.0, 82.5),
+    (14.0, 81.5), (12.0, 80.5), (10.0, 79.0),
 ]
 
 def is_india_land_point(latitude: float, longitude: float) -> bool:
@@ -67,6 +71,80 @@ def is_india_land_point(latitude: float, longitude: float) -> bool:
                 inside = not inside
         previous_index = current_index
     return inside
+
+
+def build_india_operational_layers(rain_mm: float = 85.0, blockage_pct: float = 0.0) -> Dict[str, Any]:
+    """Build India-wide operational overlays from the national CSV dataset for flood zones, safe corridors, and emergency assets."""
+    dataset = load_india_dataset()
+    records = sorted(dataset["records"], key=lambda record: record["risk_score_norm"], reverse=True)
+    if not records:
+        return {"city": "India", "status": "DATASET_EMPTY", "flood_zones": [], "safe_corridors": [], "emergency_assets": []}
+
+    selected = [record for record in records if record["flood_occurred"] or record["risk_level"] in ["High", "Critical"]]
+    if len(selected) < 3:
+        selected = records[:8]
+
+    flood_zones = []
+    for index, record in enumerate(selected[:8]):
+        lat, lon = record["coords"]
+        lat_span = 0.20 + (record["predicted_depth_cm"] / 100.0) * 0.18
+        lon_span = 0.22 + (record["predicted_depth_cm"] / 100.0) * 0.20
+        flood_zones.append({
+            "id": f"ZONE-IND-{index + 1}",
+            "name": f"Dataset flood cluster {index + 1}",
+            "risk_level": record["risk_level"],
+            "depth_cm": round(max(20.0, record["predicted_depth_cm"] * (1.0 + rain_mm / 300.0 + blockage_pct / 300.0)), 1),
+            "coordinates": [
+                [lat - lat_span, lon - lon_span],
+                [lat + lat_span, lon - lon_span],
+                [lat + lat_span, lon + lon_span],
+                [lat - lat_span, lon + lon_span],
+                [lat - lat_span, lon - lon_span],
+            ],
+        })
+
+    safe_points = sorted(
+        records,
+        key=lambda record: record["risk_score_norm"] * (1.0 + rain_mm / 300.0 + blockage_pct / 300.0),
+    )
+    safe_points = [
+        record for record in safe_points
+        if record["predicted_depth_cm"] * (1.0 + rain_mm / 300.0 + blockage_pct / 300.0) < 25.0
+    ][:10]
+    safe_corridors = []
+    for index in range(0, min(4, len(safe_points) - 1), 2):
+        start = safe_points[index]
+        end = safe_points[index + 1]
+        midpoint = [
+            (start["coords"][0] + end["coords"][0]) / 2,
+            (start["coords"][1] + end["coords"][1]) / 2,
+        ]
+        safe_corridors.append({
+            "id": f"SAFE-IND-{index + 1}",
+            "name": f"National safe corridor {index + 1}",
+            "risk_level": "Low" if safe_points[index]["risk_score_norm"] < 0.3 else "Medium",
+            "coordinates": [start["coords"], midpoint, end["coords"]],
+        })
+
+    emergency_assets = []
+    for index, record in enumerate(records[:6]):
+        emergency_assets.append({
+            "id": f"ASSET-IND-{index + 1}",
+            "name": f"Regional emergency post {index + 1}",
+            "type": "Emergency response",
+            "coords": record["coords"],
+        })
+
+    return {
+        "city": "India",
+        "status": "DATASET_DETAIL",
+        "pilot_area": "National dataset-backed flood layer",
+        "routing_mode": "dynamic rainfall and blockage weighted corridors",
+        "flood_zones": flood_zones,
+        "safe_corridors": safe_corridors,
+        "emergency_assets": emergency_assets,
+    }
+
 
 def load_india_dataset() -> Dict[str, Any]:
     """Load and summarize the attached dataset once for the national map layer."""
@@ -84,6 +162,9 @@ def load_india_dataset() -> Dict[str, Any]:
                     lat = float(row["Latitude"])
                     lon = float(row["Longitude"])
                     if not (6.0 <= lat <= 37.0 and 68.0 <= lon <= 98.0) or not is_india_land_point(lat, lon):
+                        filtered_count += 1
+                        continue
+                    if row.get("Land Cover", "").strip().lower() == "water body":
                         filtered_count += 1
                         continue
                     flooded = int(float(row.get("Flood Occurred", 0))) == 1
@@ -105,6 +186,10 @@ def load_india_dataset() -> Dict[str, Any]:
                         "risk_level": "Critical" if risk >= 0.8 else "High" if risk >= 0.6 else "Medium" if risk >= 0.3 else "Low",
                         "predicted_depth_cm": round(risk * 55, 1),
                         "rainfall_mm": round(float(row.get("Rainfall (mm)", 0)), 1),
+                        "elevation_m": round(float(row.get("Elevation (m)", 0)), 1),
+                        "river_discharge_m3s": round(float(row.get("River Discharge (m³/s)", 0)), 1),
+                        "soil_type": row.get("Soil Type", "Unknown"),
+                        "population_density": round(float(row.get("Population Density", 0)), 1),
                         "water_level_m": round(float(row.get("Water Level (m)", 0)), 1),
                         "land_cover": row.get("Land Cover", "Unknown"),
                         "flood_occurred": flooded,
@@ -120,6 +205,198 @@ def load_india_dataset() -> Dict[str, Any]:
         "source": INDIA_DATASET_PATH.name,
     }
     return _india_dataset_cache
+
+
+def build_osrm_coordinate_route(
+    origin_coords: List[float],
+    destination_coords: List[float],
+    origin_name: str,
+    destination_name: str,
+    vehicle_type: str,
+    rain_mm: float,
+    blockage_pct: float,
+) -> Optional[Dict[str, Any]]:
+    """Fetch real-road alternatives and choose the safest route for current flood conditions."""
+    dataset = load_india_dataset()["records"]
+    profile = VEHICLE_PROFILES.get(vehicle_type, VEHICLE_PROFILES["AMBULANCE"])
+    wading_limit = profile["wading_depth_limit_cm"]
+    route_url = (
+        "https://router.project-osrm.org/route/v1/driving/"
+        f"{origin_coords[1]},{origin_coords[0]};{destination_coords[1]},{destination_coords[0]}"
+        "?alternatives=true&overview=full&geometries=geojson"
+    )
+
+    def distance_km(first: List[float], second: List[float]) -> float:
+        return math.hypot((second[0] - first[0]) * 111.0, (second[1] - first[1]) * 111.0)
+
+    try:
+        request = UrlRequest(route_url, headers={"User-Agent": "FLOOD-X/1.0"})
+        with urlopen(request, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        candidates = payload.get("routes", [])
+        if not candidates or not dataset:
+            return None
+    except Exception:
+        return None
+
+    evaluated = []
+    for candidate in candidates:
+        raw_coordinates = candidate.get("geometry", {}).get("coordinates", [])
+        coordinates = [[point[1], point[0]] for point in raw_coordinates]
+        if len(coordinates) < 2:
+            continue
+        sampled = coordinates[::max(1, len(coordinates) // 24)]
+        max_depth_cm = 0.0
+        risk_total = 0.0
+        flooded_segments = 0
+        segments = []
+        for index, point in enumerate(sampled):
+            nearby = min(dataset, key=lambda record: distance_km(point, record["coords"]))
+            dynamic_factor = 1.0 + rain_mm / 300.0 + blockage_pct / 300.0
+            depth_cm = nearby["predicted_depth_cm"] * dynamic_factor
+            max_depth_cm = max(max_depth_cm, depth_cm)
+            risk_total += nearby["risk_score_norm"]
+            if depth_cm >= 15.0:
+                flooded_segments += 1
+            if index > 0:
+                segment_length = distance_km(sampled[index - 1], point) * 1000.0
+                segments.append({
+                    "road_id": f"OSRM-{index:02d}",
+                    "name": "Live road-network segment",
+                    "length_m": round(segment_length, 1),
+                    "depth_cm": round(depth_cm, 1),
+                    "risk_score": round(nearby["risk_score_norm"] * 100.0, 1),
+                    "risk_score_norm": nearby["risk_score_norm"],
+                    "is_hazard": depth_cm >= wading_limit,
+                })
+        average_risk = risk_total / max(len(sampled), 1)
+        safe = max_depth_cm < wading_limit
+        score = candidate.get("distance", 0.0) * (1.0 + average_risk * profile["risk_penalty_factor"])
+        evaluated.append((not safe, score, candidate, coordinates, segments, max_depth_cm, flooded_segments))
+
+    if not evaluated:
+        return None
+    _, _, candidate, coordinates, segments, max_depth_cm, flooded_segments = min(evaluated, key=lambda item: (item[0], item[1]))
+    safe = max_depth_cm < wading_limit
+    route = {
+        "path_nodes": ["OSRM_ORIGIN", "OSRM_DESTINATION"],
+        "total_distance_km": round(candidate.get("distance", 0.0) / 1000.0, 2),
+        "estimated_duration_min": round(candidate.get("duration", 0.0) / 60.0, 1),
+        "max_depth_cm": round(max_depth_cm, 1),
+        "flooded_segments_count": flooded_segments,
+        "risk_status": "LOW RISK / SAFE" if safe else "CRITICAL / IMPASSABLE",
+        "color": "#10b981" if safe else "#ef4444",
+        "segments": segments,
+        "coordinates": coordinates,
+    }
+    return {
+        "origin": {"id": "OSRM_ORIGIN", "name": origin_name, "coords": origin_coords},
+        "destination": {"id": "OSRM_DESTINATION", "name": destination_name, "coords": destination_coords},
+        "vehicle_profile": profile,
+        "forecast_horizon_min": 60,
+        "routing_source": "OSRM live road network + FLOOD-X dynamic flood scoring",
+        "normal_route": route,
+        "recommended_route": route if safe else None,
+        "summary": {
+            "flooded_segments_avoided": flooded_segments if safe else 0,
+            "is_normal_route_trapped": not safe,
+            "recommendation": "Live road route selected from current flood conditions." if safe else "No live road alternative is safe under the current flood conditions.",
+        },
+    }
+
+
+def build_national_coordinate_route(
+    origin_coords: List[float],
+    destination_coords: List[float],
+    origin_name: str,
+    destination_name: str,
+    vehicle_type: str,
+    rain_mm: float,
+    blockage_pct: float,
+) -> Dict[str, Any]:
+    """Evaluate a direct national corridor against nearby CSV flood observations."""
+    live_route = build_osrm_coordinate_route(
+        origin_coords,
+        destination_coords,
+        origin_name,
+        destination_name,
+        vehicle_type,
+        rain_mm,
+        blockage_pct,
+    )
+    if live_route:
+        return live_route
+
+    dataset = load_india_dataset()["records"]
+    profile = VEHICLE_PROFILES.get(vehicle_type, VEHICLE_PROFILES["AMBULANCE"])
+    wading_limit = profile["wading_depth_limit_cm"]
+    sample_count = 12
+    coordinates = []
+    segments = []
+    total_distance_km = 0.0
+    max_depth_cm = 0.0
+    flooded_segments = 0
+
+    def distance_km(first: List[float], second: List[float]) -> float:
+        return math.hypot((second[0] - first[0]) * 111.0, (second[1] - first[1]) * 111.0)
+
+    for index in range(sample_count + 1):
+        fraction = index / sample_count
+        point = [
+            origin_coords[0] + (destination_coords[0] - origin_coords[0]) * fraction,
+            origin_coords[1] + (destination_coords[1] - origin_coords[1]) * fraction,
+        ]
+        coordinates.append(point)
+
+        if index == 0:
+            continue
+        nearby = min(dataset, key=lambda record: distance_km(point, record["coords"])) if dataset else None
+        depth_cm = 0.0
+        risk_norm = 0.0
+        if nearby:
+            risk_norm = nearby["risk_score_norm"]
+            depth_cm = nearby["predicted_depth_cm"] * (1.0 + rain_mm / 300.0 + blockage_pct / 300.0)
+        segment_distance_km = distance_km(coordinates[index - 1], point)
+        total_distance_km += segment_distance_km
+        max_depth_cm = max(max_depth_cm, depth_cm)
+        if depth_cm >= 15.0:
+            flooded_segments += 1
+        segments.append({
+            "road_id": f"NATIONAL-{index:02d}",
+            "name": "Dataset-evaluated national corridor",
+            "length_m": round(segment_distance_km * 1000.0, 1),
+            "depth_cm": round(depth_cm, 1),
+            "risk_score": round(risk_norm * 100.0, 1),
+            "risk_score_norm": round(risk_norm, 2),
+            "is_hazard": depth_cm >= wading_limit,
+        })
+
+    duration_min = total_distance_km / max(profile["speed_kmh"], 1.0) * 60.0
+    safe = max_depth_cm < wading_limit
+    route = {
+        "path_nodes": ["NATIONAL_ORIGIN", "NATIONAL_DESTINATION"],
+        "total_distance_km": round(total_distance_km, 2),
+        "estimated_duration_min": round(duration_min, 1),
+        "max_depth_cm": round(max_depth_cm, 1),
+        "flooded_segments_count": flooded_segments,
+        "risk_status": "LOW RISK / SAFE" if safe else "CRITICAL / IMPASSABLE",
+        "color": "#10b981" if safe else "#ef4444",
+        "segments": segments,
+        "coordinates": coordinates,
+    }
+    return {
+        "origin": {"id": "NATIONAL_ORIGIN", "name": origin_name, "coords": origin_coords},
+        "destination": {"id": "NATIONAL_DESTINATION", "name": destination_name, "coords": destination_coords},
+        "vehicle_profile": profile,
+        "forecast_horizon_min": 60,
+        "normal_route": route,
+        "recommended_route": route if safe else None,
+        "summary": {
+            "flooded_segments_avoided": flooded_segments if safe else 0,
+            "is_normal_route_trapped": not safe,
+            "recommendation": "National dataset corridor is clear for the selected vehicle." if safe else "No safe corridor found between these coordinates under the current flood conditions.",
+        },
+    }
 
 app = FastAPI(
     title="FLOOD-X: AI + Physics Based Urban Flood Intelligence",
@@ -143,8 +420,12 @@ class SimulationRequest(BaseModel):
     forecast_horizon_min: int = Field(default=60, ge=0, le=180, description="Horizon in minutes")
 
 class RouteRequest(BaseModel):
-    origin_id: str = "J_ASIAN_HEART"
-    destination_id: str = "J_BAIL_BAZAR"
+    origin_id: Optional[str] = "J_ASIAN_HEART"
+    destination_id: Optional[str] = "J_BAIL_BAZAR"
+    origin_name: Optional[str] = "Asian Heart Hospital (BKC)"
+    destination_name: Optional[str] = "Bail Bazar Emergency Zone"
+    origin_coords: Optional[List[float]] = None
+    destination_coords: Optional[List[float]] = None
     vehicle_type: str = "AMBULANCE"
     forecast_horizon_min: int = 60
     rainfall_scenario_mm: float = 85.0
@@ -217,6 +498,7 @@ def get_rainfall_current():
         return {
             "source": "FLOOD-X pilot simulation fallback",
             "status": "FALLBACK",
+            "station": "Santacruz Doppler Weather Radar (simulation fallback)",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "rainfall_mm": 18.5,
             "intensity_mm_hr": 58.2,
@@ -287,36 +569,45 @@ def get_india_dataset(
         "records": records[:limit],
     }
 
+@app.get("/api/india/operational-layers")
+def get_india_operational_layers(
+    rain_mm: float = Query(85.0, ge=10.0, le=250.0),
+    blockage_pct: float = Query(0.0, ge=0.0, le=95.0),
+):
+    """Returns dataset-backed flood zones, safe corridors, and emergency assets across India."""
+    return build_india_operational_layers(rain_mm=rain_mm, blockage_pct=blockage_pct)
+
+
 @app.get("/api/place/detail")
 def get_place_detail(
     city: str = Query("Mumbai"),
     rain_mm: float = Query(85.0, ge=10.0, le=250.0),
     blockage_pct: float = Query(0.0, ge=0.0, le=95.0),
 ):
-    """Returns map-ready local operational layers for a selected Indian city."""
-    if city.strip().lower() != "mumbai":
-        return {"city": city, "status": "OVERVIEW_ONLY", "flood_zones": [], "safe_corridors": [], "emergency_assets": []}
+    """Returns map-ready operational layers for a selected city, defaulting to a dataset-backed India-wide layer when the request is not a pilot-only zone."""
+    if city.strip().lower() == "mumbai":
+        severity = min(1.0, 0.45 + rain_mm / 300.0 + blockage_pct / 180.0)
+        return {
+            "city": "Mumbai",
+            "status": "PILOT_DETAIL",
+            "pilot_area": "Kurla/BKC Basin",
+            "flood_zones": [
+                {"id": "ZONE-MITHI", "name": "Mithi River lowland", "risk_level": "Critical", "depth_cm": round(42 * severity, 1), "coordinates": [[19.0675, 72.8680], [19.0715, 72.8700], [19.0725, 72.8750], [19.0680, 72.8770], [19.0650, 72.8730]]},
+                {"id": "ZONE-KURLA", "name": "Kurla West drainage basin", "risk_level": "High", "depth_cm": round(34 * severity, 1), "coordinates": [[19.0660, 72.8750], [19.0735, 72.8755], [19.0760, 72.8810], [19.0700, 72.8840], [19.0660, 72.8800]]},
+                {"id": "ZONE-BAIL", "name": "Bail Bazar low point", "risk_level": "High", "depth_cm": round(29 * severity, 1), "coordinates": [[19.0775, 72.8810], [19.0825, 72.8815], [19.0830, 72.8870], [19.0780, 72.8880]]},
+            ],
+            "safe_corridors": [
+                {"id": "SAFE-SCLR", "name": "SCLR elevated emergency corridor", "risk_level": "Low", "coordinates": [[19.0775, 72.8730], [19.0790, 72.8785], [19.0810, 72.8845]]},
+                {"id": "SAFE-BKC", "name": "BKC elevated approach", "risk_level": "Low", "coordinates": [[19.0645, 72.8560], [19.0665, 72.8655], [19.0700, 72.8695]]},
+            ],
+            "emergency_assets": [
+                {"id": "ASSET-HOSPITAL", "name": "Bhabha Municipal Hospital", "type": "Hospital", "coords": [19.0640, 72.8805]},
+                {"id": "ASSET-FIRE", "name": "Kurla Fire & Rescue Station", "type": "Fire Station", "coords": [19.0630, 72.8770]},
+                {"id": "ASSET-SHELTER", "name": "Bhabha Emergency Camp", "type": "Shelter", "coords": [19.0640, 72.8805]},
+            ],
+        }
 
-    severity = min(1.0, 0.45 + rain_mm / 300.0 + blockage_pct / 180.0)
-    return {
-        "city": "Mumbai",
-        "status": "PILOT_DETAIL",
-        "pilot_area": "Kurla/BKC Basin",
-        "flood_zones": [
-            {"id": "ZONE-MITHI", "name": "Mithi River lowland", "risk_level": "Critical", "depth_cm": round(42 * severity, 1), "coordinates": [[19.0675, 72.8680], [19.0715, 72.8700], [19.0725, 72.8750], [19.0680, 72.8770], [19.0650, 72.8730]]},
-            {"id": "ZONE-KURLA", "name": "Kurla West drainage basin", "risk_level": "High", "depth_cm": round(34 * severity, 1), "coordinates": [[19.0660, 72.8750], [19.0735, 72.8755], [19.0760, 72.8810], [19.0700, 72.8840], [19.0660, 72.8800]]},
-            {"id": "ZONE-BAIL", "name": "Bail Bazar low point", "risk_level": "High", "depth_cm": round(29 * severity, 1), "coordinates": [[19.0775, 72.8810], [19.0825, 72.8815], [19.0830, 72.8870], [19.0780, 72.8880]]},
-        ],
-        "safe_corridors": [
-            {"id": "SAFE-SCLR", "name": "SCLR elevated emergency corridor", "risk_level": "Low", "coordinates": [[19.0775, 72.8730], [19.0790, 72.8785], [19.0810, 72.8845]]},
-            {"id": "SAFE-BKC", "name": "BKC elevated approach", "risk_level": "Low", "coordinates": [[19.0645, 72.8560], [19.0665, 72.8655], [19.0700, 72.8695]]},
-        ],
-        "emergency_assets": [
-            {"id": "ASSET-HOSPITAL", "name": "Bhabha Municipal Hospital", "type": "Hospital", "coords": [19.0640, 72.8805]},
-            {"id": "ASSET-FIRE", "name": "Kurla Fire & Rescue Station", "type": "Fire Station", "coords": [19.0630, 72.8770]},
-            {"id": "ASSET-SHELTER", "name": "Bhabha Emergency Camp", "type": "Shelter", "coords": [19.0640, 72.8805]},
-        ],
-    }
+    return build_india_operational_layers(rain_mm=rain_mm, blockage_pct=blockage_pct)
 
 @app.get("/api/rainfall/forecast")
 def get_rainfall_forecast(
@@ -446,14 +737,53 @@ def run_simulation(req: SimulationRequest):
 @app.post("/api/route")
 def calculate_flood_aware_route(req: RouteRequest):
     """Generates flood-aware emergency route comparing normal vs safe route (Section 8, 10, 21)."""
-    return emergency_router.calculate_routes(
-        origin_id=req.origin_id,
-        destination_id=req.destination_id,
+    origin_id = req.origin_id
+    destination_id = req.destination_id
+
+    if req.origin_coords and len(req.origin_coords) == 2:
+        origin_id = emergency_router.find_nearest_node(
+            req.origin_coords[0], req.origin_coords[1], prefer_highway=True, max_distance_km=12.0
+        )
+    if req.destination_coords and len(req.destination_coords) == 2:
+        destination_id = emergency_router.find_nearest_node(
+            req.destination_coords[0], req.destination_coords[1], prefer_highway=True, max_distance_km=12.0
+        )
+
+    if (origin_id is None or destination_id is None) and req.origin_coords and req.destination_coords:
+        if all(len(coords) == 2 and 6.0 <= coords[0] <= 37.0 and 68.0 <= coords[1] <= 98.0 for coords in [req.origin_coords, req.destination_coords]):
+            return build_national_coordinate_route(
+                req.origin_coords,
+                req.destination_coords,
+                req.origin_name or "Selected origin",
+                req.destination_name or "Selected destination",
+                req.vehicle_type,
+                req.rainfall_scenario_mm,
+                req.blockage_pct,
+            )
+
+    if origin_id is None or destination_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail="This location is outside the active FLOOD-X road network coverage. Choose a point within the Mumbai pilot map or use a supported road landmark.",
+        )
+
+    route_result = emergency_router.calculate_routes(
+        origin_id=origin_id,
+        destination_id=destination_id,
         vehicle_type=req.vehicle_type,
         t_minutes=req.forecast_horizon_min,
         rainfall_scenario_mm=req.rainfall_scenario_mm,
         blockage_pct=req.blockage_pct
     )
+
+    if req.origin_name:
+        route_result["origin"]["name"] = req.origin_name
+        route_result["origin"]["coords"] = req.origin_coords or route_result["origin"]["coords"]
+    if req.destination_name:
+        route_result["destination"]["name"] = req.destination_name
+        route_result["destination"]["coords"] = req.destination_coords or route_result["destination"]["coords"]
+
+    return route_result
 
 @app.get("/api/exposure")
 def get_population_exposure(
@@ -556,7 +886,7 @@ async def upload_custom_dataset_endpoint(request: Request):
 @app.get("/api/upload/validate/{upload_id}")
 def validate_upload(upload_id: str):
     """Shows validation errors and warnings for uploaded file (Section 27.5)."""
-    upl = upload_service.uploads.get(upload_id)
+    upl = get_upload(upload_id)
     if not upl:
         raise HTTPException(status_code=404, detail="Upload not found")
     return {
@@ -695,6 +1025,21 @@ def get_active_alerts(
                 "message": f"DRAINAGE SURCHARGE: Conduit {pipe['pipe_id']} exceeded capacity ({pipe['utilization_pct']}%). Backwater ponding occurring.",
                 "utilization_pct": pipe["utilization_pct"]
             })
+
+    drainage = flood_state["drainage"]
+    if drainage["water_level_rising"]:
+        alerts.append({
+            "id": "ALERT-DRAINAGE-WATER-LEVEL-RISING",
+            "severity": "SURCHARGE",
+            "message": (
+                f"DRAINAGE CAPACITY WARNING: estimated water levels are rising in "
+                f"{len(drainage['water_level_rising_nodes'])} area(s); "
+                f"maximum level is {drainage['max_estimated_water_level_cm']} cm."
+            ),
+            "water_level_rising_nodes": drainage["water_level_rising_nodes"],
+            "max_estimated_water_level_cm": drainage["max_estimated_water_level_cm"],
+            "drainage_effectiveness_pct": drainage["drainage_effectiveness_pct"],
+        })
 
     return {
         "timestamp": "Real-Time Broadcast",

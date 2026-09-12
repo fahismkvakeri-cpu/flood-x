@@ -29,6 +29,7 @@ from app.main import (
     CustomUploadPayload,
     DIST_DIR
 )
+from app.engine.drainage_digital_twin import drainage_twin
 
 def test_blueprint_apis():
     print("--- 1. Testing System Health & Telemetry (/api/health) ---")
@@ -73,7 +74,20 @@ def test_blueprint_apis():
     print("\n--- 5. Testing What-If Simulation (/api/simulation) ---")
     sim_res = run_simulation(SimulationRequest(rainfall_scenario_mm=120.0, blockage_percent=40.0, forecast_horizon_min=90))
     assert sim_res["kpis"]["surcharged_drains"] > 0
+    assert sim_res["drainage"]["retained_floodwater_m3"] > 0
+    assert sim_res["drainage"]["water_level_rising"] is True
+    assert sim_res["drainage"]["effectiveness_status"] == "UNDER_CAPACITY"
     print(f"[PASS] /api/simulation passed: Surcharged drains = {sim_res['kpis']['surcharged_drains']}, Critical roads = {sim_res['kpis']['critical_roads']}")
+
+    print("\n--- 5b. Testing Drainage Water-Level Effectiveness Diagnostics ---")
+    dry = drainage_twin.simulate(0.0, 0.0)
+    blocked = drainage_twin.simulate(120.0, 40.0)
+    assert dry["drainage_effectiveness_pct"] == 100.0
+    assert dry["water_level_rising"] is False
+    assert blocked["retained_floodwater_m3"] > dry["retained_floodwater_m3"]
+    assert blocked["max_estimated_water_level_cm"] > dry["max_estimated_water_level_cm"]
+    assert blocked["drainage_effectiveness_pct"] < dry["drainage_effectiveness_pct"]
+    print(f"[PASS] drainage diagnostics passed: {blocked['retained_floodwater_m3']} m³ retained, max level = {blocked['max_estimated_water_level_cm']} cm")
 
     print("\n--- 6. Testing Section 10 Flood-Aware Routing (/api/route) ---")
     route_res = calculate_flood_aware_route(RouteRequest(

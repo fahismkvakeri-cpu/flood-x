@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
+import { ExternalLink } from 'lucide-react';
 import { RoadPrediction, RouteCalculationResponse, DrainageSimulation, CitizenReport, IndiaRiskPoint, PlaceDetail } from '../types';
 
 interface FloodMapProps {
@@ -12,6 +13,7 @@ interface FloodMapProps {
   onSelectRoad: (road: RoadPrediction) => void;
   onSelectCitizenReport: (report: CitizenReport) => void;
   routeData: RouteCalculationResponse | null;
+  routeLoading: boolean;
   showDrainageLayer: boolean;
   showCitizenReports: boolean;
   onToggleDrainage: () => void;
@@ -23,11 +25,12 @@ interface FloodMapProps {
   onToggleDatasetPoints: () => void;
   placeDetail: PlaceDetail | null;
   showFloodZones: boolean;
-  showSafeCorridors: boolean;
   showEmergencyAssets: boolean;
   onToggleFloodZones: () => void;
-  onToggleSafeCorridors: () => void;
   onToggleEmergencyAssets: () => void;
+  onSelectRiskPoint: (point: IndiaRiskPoint) => void;
+  routePickMode: 'origin' | 'destination' | null;
+  onSelectMapLocation: (coords: [number, number]) => void;
 }
 
 export const FloodMap: React.FC<FloodMapProps> = ({
@@ -40,6 +43,7 @@ export const FloodMap: React.FC<FloodMapProps> = ({
   onSelectRoad,
   onSelectCitizenReport,
   routeData,
+  routeLoading,
   showDrainageLayer,
   showCitizenReports,
   onToggleDrainage,
@@ -51,12 +55,41 @@ export const FloodMap: React.FC<FloodMapProps> = ({
   onToggleDatasetPoints,
   placeDetail,
   showFloodZones,
-  showSafeCorridors,
   showEmergencyAssets,
   onToggleFloodZones,
-  onToggleSafeCorridors,
   onToggleEmergencyAssets,
+  onSelectRiskPoint,
+  routePickMode,
+  onSelectMapLocation,
 }) => {
+  const [showRiskPoints, setShowRiskPoints] = useState(true);
+  const [showNormalRoute, setShowNormalRoute] = useState(true);
+  const [showSafeRoute, setShowSafeRoute] = useState(true);
+  const [showSclrCorridor, setShowSclrCorridor] = useState(true);
+  const [showSatelliteImagery, setShowSatelliteImagery] = useState(false);
+  const [showLowRiskAreas, setShowLowRiskAreas] = useState(true);
+  const [showMediumRiskAreas, setShowMediumRiskAreas] = useState(true);
+  const [showHighRiskAreas, setShowHighRiskAreas] = useState(true);
+  const [showCriticalRiskAreas, setShowCriticalRiskAreas] = useState(true);
+  const sclrCorridor = roads.find((road) => road.name.toLowerCase().includes('sclr elevated express corridor'));
+
+  const legendItems = [
+    { label: 'Risk Points', color: 'bg-red-500', active: showRiskPoints, onToggle: () => setShowRiskPoints((visible) => !visible) },
+    { label: 'Drainage Graph', color: 'bg-cyan-400', active: showDrainageLayer, onToggle: onToggleDrainage },
+    { label: 'Dataset Points', color: 'bg-orange-400', active: showDatasetPoints, onToggle: onToggleDatasetPoints },
+    { label: 'Flood Zones', color: 'bg-red-500', active: showFloodZones, onToggle: onToggleFloodZones },
+    { label: 'Flooded Area · Low / Safe', color: 'bg-emerald-400', active: showLowRiskAreas, onToggle: () => setShowLowRiskAreas((visible) => !visible) },
+    { label: 'Flooded Area · Medium / Watch', color: 'bg-yellow-400', active: showMediumRiskAreas, onToggle: () => setShowMediumRiskAreas((visible) => !visible) },
+    { label: 'Flooded Area · High', color: 'bg-orange-500', active: showHighRiskAreas, onToggle: () => setShowHighRiskAreas((visible) => !visible) },
+    { label: 'Flooded Area · Critical', color: 'bg-red-500', active: showCriticalRiskAreas, onToggle: () => setShowCriticalRiskAreas((visible) => !visible) },
+    { label: 'SCLR Elevated Express Corridor', detail: `${sclrCorridor?.elevation_m ?? 11.8} m elevated · emergency bypass`, color: 'bg-yellow-300', active: showSclrCorridor, onToggle: () => setShowSclrCorridor((visible) => !visible) },
+    { label: 'FLOOD-X Route', color: 'bg-emerald-500', active: showSafeRoute, onToggle: () => setShowSafeRoute((visible) => !visible) },
+    { label: 'Normal Route', color: 'bg-red-500', active: showNormalRoute, onToggle: () => setShowNormalRoute((visible) => !visible) },
+    { label: 'Emergency Assets', color: 'bg-blue-500', active: showEmergencyAssets, onToggle: onToggleEmergencyAssets },
+    { label: 'Citizen Reports', color: 'bg-amber-400', active: showCitizenReports, onToggle: onToggleCitizenReports },
+    { label: 'Satellite Imagery', color: 'bg-sky-400', active: showSatelliteImagery, onToggle: () => setShowSatelliteImagery((visible) => !visible) },
+  ];
+
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const roadLayerGroupRef = useRef<L.LayerGroup | null>(null);
@@ -65,6 +98,7 @@ export const FloodMap: React.FC<FloodMapProps> = ({
   const userLocLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const routeLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const operationalLayerGroupRef = useRef<L.LayerGroup | null>(null);
+  const mapTileLayerRef = useRef<L.TileLayer | null>(null);
 
   // Initialize Leaflet Map
   useEffect(() => {
@@ -85,6 +119,7 @@ export const FloodMap: React.FC<FloodMapProps> = ({
       subdomains: 'abcd',
       attribution: '&copy; Esri, OpenStreetMap contributors',
     }).addTo(map);
+    mapTileLayerRef.current = tiles;
     tiles.on('tileerror', () => {
       if (!usingFallbackTiles) {
         usingFallbackTiles = true;
@@ -108,21 +143,89 @@ export const FloodMap: React.FC<FloodMapProps> = ({
     return () => {
       map.remove();
       mapInstanceRef.current = null;
+      mapTileLayerRef.current = null;
     };
   }, []);
 
   useEffect(() => {
+    const tiles = mapTileLayerRef.current;
+    if (!tiles) return;
+    const imageryUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+    const streetUrl = import.meta.env.VITE_MAP_TILE_URL || 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
+    tiles.setUrl(showSatelliteImagery ? imageryUrl : streetUrl);
+    onMapStatusChange(showSatelliteImagery ? 'Satellite imagery enabled.' : null);
+  }, [showSatelliteImagery, onMapStatusChange]);
+
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    const handleMapClick = (event: L.LeafletMouseEvent) => {
+      if (routePickMode) {
+        onSelectMapLocation([event.latlng.lat, event.latlng.lng]);
+      }
+    };
+    map.on('click', handleMapClick);
+    return () => {
+      map.off('click', handleMapClick);
+    };
+  }, [onSelectMapLocation, routePickMode]);
+
+  useEffect(() => {
     if (!mapInstanceRef.current) return;
     const nationalLayer = L.layerGroup().addTo(mapInstanceRef.current);
-    indiaRiskPoints.filter((point) => showDatasetPoints || !point.id.startsWith('INDIA-DATA-')).forEach((point) => {
-      const color = point.risk_level === 'Critical' ? '#ef4444' : point.risk_level === 'High' ? '#f97316' : '#f59e0b';
-      const isDatasetPoint = point.id.startsWith('INDIA-DATA-');
-      L.circleMarker(point.coords, { radius: isDatasetPoint ? 5 : 10, color: '#fff', weight: isDatasetPoint ? 1 : 2, fillColor: color, fillOpacity: 0.85 })
-        .bindTooltip(`<strong>${point.name}</strong><br/>${point.risk_level} risk · ${point.predicted_depth_cm} cm projected depth${point.rainfall_mm ? `<br/>Rainfall: ${point.rainfall_mm} mm` : ''}${point.land_cover ? `<br/>Land cover: ${point.land_cover}` : ''}`)
+    const riskAreaVisibility: Record<string, boolean> = {
+      Low: showLowRiskAreas,
+      Medium: showMediumRiskAreas,
+      High: showHighRiskAreas,
+      Critical: showCriticalRiskAreas,
+    };
+    const riskAreaColors: Record<string, string> = {
+      Low: '#22c55e',
+      Medium: '#facc15',
+      High: '#f97316',
+      Critical: '#ef4444',
+    };
+
+    indiaRiskPoints.forEach((point) => {
+      if (!riskAreaVisibility[point.risk_level]) return;
+      const color = riskAreaColors[point.risk_level];
+      const radius = Math.max(350, Math.min(2200, point.predicted_depth_cm * 28));
+      L.circle(point.coords, {
+        radius,
+        color,
+        weight: 1.5,
+        fillColor: color,
+        fillOpacity: point.risk_level === 'Critical' ? 0.28 : 0.18,
+      })
+        .bindTooltip(
+          `<strong>${point.risk_level} flooded area</strong><br/>${point.name}<br/>Projected depth: ${point.predicted_depth_cm} cm`,
+          { sticky: true }
+        )
         .addTo(nationalLayer);
     });
+
+    indiaRiskPoints.filter((point) => {
+      const isDatasetPoint = point.id.startsWith('INDIA-DATA-');
+      return isDatasetPoint ? showDatasetPoints : showRiskPoints;
+    }).forEach((point) => {
+      const color = point.risk_level === 'Critical' ? '#ef4444' : point.risk_level === 'High' ? '#f97316' : '#f59e0b';
+      const isDatasetPoint = point.id.startsWith('INDIA-DATA-');
+      const marker = L.circleMarker(point.coords, { radius: isDatasetPoint ? 5 : 10, color: '#fff', weight: isDatasetPoint ? 1 : 2, fillColor: color, fillOpacity: 0.85 })
+        .bindTooltip(`<strong>${point.name}</strong><br/>${point.risk_level} risk · ${point.predicted_depth_cm} cm projected depth${point.rainfall_mm ? `<br/>Rainfall: ${point.rainfall_mm} mm` : ''}${point.land_cover ? `<br/>Land cover: ${point.land_cover}` : ''}`)
+        .addTo(nationalLayer);
+      marker.on('click', () => onSelectRiskPoint(point));
+    });
     return () => { nationalLayer.remove(); };
-  }, [indiaRiskPoints, showDatasetPoints]);
+  }, [
+    indiaRiskPoints,
+    showDatasetPoints,
+    showRiskPoints,
+    showLowRiskAreas,
+    showMediumRiskAreas,
+    showHighRiskAreas,
+    showCriticalRiskAreas,
+    onSelectRiskPoint,
+  ]);
 
   useEffect(() => {
     if (!operationalLayerGroupRef.current) return;
@@ -135,13 +238,6 @@ export const FloodMap: React.FC<FloodMapProps> = ({
           .addTo(operationalLayerGroupRef.current!);
       });
     }
-    if (showSafeCorridors) {
-      placeDetail.safe_corridors.forEach((corridor) => {
-        L.polyline(corridor.coordinates, { color: '#22c55e', weight: 8, opacity: 0.9, dashArray: '2, 8' })
-          .bindTooltip(`<strong>Safe corridor: ${corridor.name}</strong><br/>Emergency access priority`)
-          .addTo(operationalLayerGroupRef.current!);
-      });
-    }
     if (showEmergencyAssets) {
       placeDetail.emergency_assets.forEach((asset) => {
         L.marker(asset.coords, { title: asset.name })
@@ -149,7 +245,40 @@ export const FloodMap: React.FC<FloodMapProps> = ({
           .addTo(operationalLayerGroupRef.current!);
       });
     }
-  }, [placeDetail, showFloodZones, showSafeCorridors, showEmergencyAssets]);
+  }, [placeDetail, showFloodZones, showEmergencyAssets]);
+
+  const openGoogleMapsRoute = () => {
+    if (!routeData?.recommended_route) return;
+    const routeCoordinates = routeData.recommended_route.coordinates;
+    const waypoints = routeCoordinates
+      .slice(1, -1)
+      .filter((_, index) => index % Math.max(1, Math.ceil(routeCoordinates.length / 8)) === 0)
+      .slice(0, 8)
+      .map(([latitude, longitude]) => `${latitude},${longitude}`)
+      .join('|');
+    const params = new URLSearchParams({
+      api: '1',
+      origin: `${routeData.origin.coords[0]},${routeData.origin.coords[1]}`,
+      destination: `${routeData.destination.coords[0]},${routeData.destination.coords[1]}`,
+      travelmode: 'driving',
+    });
+    if (waypoints) params.set('waypoints', waypoints);
+    window.open(`https://www.google.com/maps/dir/?${params.toString()}&dir_action=navigate`, '_blank', 'noopener,noreferrer');
+  };
+
+  const getRouteCoordinates = (
+    route: RouteCalculationResponse['recommended_route'] | RouteCalculationResponse['normal_route']
+  ) => {
+    if (!route) return [] as [number, number][];
+    const validCoordinates = route.coordinates.filter(
+      (point): point is [number, number] =>
+        Array.isArray(point) && point.length === 2 && Number.isFinite(point[0]) && Number.isFinite(point[1])
+    );
+    if (validCoordinates.length < 2) return [] as [number, number][];
+    const origin = routeData?.origin.coords;
+    const destination = routeData?.destination.coords;
+    return [origin || validCoordinates[0], ...validCoordinates.slice(1, -1), destination || validCoordinates[validCoordinates.length - 1]];
+  };
 
   // Handle Pan / FlyTo
   useEffect(() => {
@@ -187,7 +316,31 @@ export const FloodMap: React.FC<FloodMapProps> = ({
 
       polyline.addTo(roadLayerGroupRef.current!);
     });
-  }, [roads, selectedRoad, onSelectRoad]);
+
+    if (showSclrCorridor) {
+      const sclr = sclrCorridor;
+      if (sclr) {
+        L.polyline(sclr.coords, {
+          color: '#facc15',
+          weight: 10,
+          opacity: 0.35,
+        })
+          .bindTooltip(
+            `<strong>SCLR Elevated Express Corridor</strong><br/>Elevated emergency bypass<br/>Elevation: ${sclr.elevation_m} m · Depth: ${sclr.predicted_depth_cm} cm<br/>Status: ${sclr.risk_level} risk`,
+            { sticky: true }
+          )
+          .addTo(roadLayerGroupRef.current!);
+        L.polyline(sclr.coords, {
+          color: '#fde047',
+          weight: 5,
+          opacity: 1,
+          dashArray: '12, 8',
+        })
+          .bindTooltip('SCLR Elevated Express Corridor · Emergency bypass', { sticky: true })
+          .addTo(roadLayerGroupRef.current!);
+      }
+    }
+  }, [roads, selectedRoad, onSelectRoad, showSclrCorridor]);
 
   // Update Drainage Network Layer
   useEffect(() => {
@@ -195,6 +348,25 @@ export const FloodMap: React.FC<FloodMapProps> = ({
     drainageLayerGroupRef.current.clearLayers();
 
     if (!showDrainageLayer || !drainage) return;
+
+    const nodeById = drainage.nodes;
+    drainage.pipes.forEach((pipe) => {
+      const source = nodeById[pipe.source];
+      const destination = nodeById[pipe.destination];
+      if (!source || !destination) return;
+      const color = pipe.status === 'SURCHARGED' ? '#ef4444' : pipe.status === 'CRITICAL' ? '#f59e0b' : '#22d3ee';
+      L.polyline([source.coords, destination.coords], {
+        color,
+        weight: pipe.status === 'SURCHARGED' ? 5 : 3,
+        opacity: 0.85,
+        dashArray: pipe.status === 'SURCHARGED' ? '8, 6' : undefined,
+      })
+        .bindTooltip(
+          `<strong>${pipe.pipe_id}</strong><br/>Status: <b>${pipe.status}</b><br/>Flow: ${pipe.current_flow_m3s} / ${pipe.capacity_m3s} m³/s<br/>Utilization: ${pipe.utilization_pct}%`,
+          { sticky: true }
+        )
+        .addTo(drainageLayerGroupRef.current!);
+    });
 
     Object.values(drainage.nodes).forEach((n) => {
       const isSurcharged = n.is_surcharged;
@@ -207,7 +379,7 @@ export const FloodMap: React.FC<FloodMapProps> = ({
       });
 
       marker.bindTooltip(
-        `<strong>${n.name}</strong><br/>Status: <b>${n.status}</b><br/>Inflow: ${n.inflow_m3s} m³/s`,
+        `<strong>${n.name}</strong><br/>Status: <b>${n.status}</b><br/>Water level: ${n.estimated_water_level_cm} cm<br/>Retained water: ${n.retained_volume_m3} m³<br/>Drainage effectiveness: ${n.drainage_effectiveness_pct}%`,
         { sticky: true }
       );
 
@@ -278,69 +450,106 @@ export const FloodMap: React.FC<FloodMapProps> = ({
 
     if (!routeData) return;
 
+    const safeCoordinates = getRouteCoordinates(routeData.recommended_route);
+    const normalCoordinates = getRouteCoordinates(routeData.normal_route);
+    const routeForBounds = safeCoordinates.length > 1 ? safeCoordinates : normalCoordinates;
+    if (routeForBounds.length > 1) {
+      mapInstanceRef.current?.fitBounds(L.latLngBounds(routeForBounds), {
+        padding: [70, 70],
+        maxZoom: 14,
+        animate: true,
+      });
+    }
+
     // 1. Normal Route (Red Dashed)
-    if (routeData.normal_route && routeData.normal_route.coordinates.length > 0) {
-      const normalLine = L.polyline(routeData.normal_route.coordinates, {
+    if (showNormalRoute && normalCoordinates.length > 1) {
+      const normalLine = L.polyline(normalCoordinates, {
         color: '#f87171',
         weight: 5,
         opacity: 0.7,
         dashArray: '8, 8',
       });
-      normalLine.bindTooltip(`⚠️ Normal Route: ${routeData.normal_route.estimated_duration_min} min (HIGH RISK)`, {
+      normalLine.bindTooltip(`⚠️ Normal Route: ${routeData.normal_route?.estimated_duration_min ?? '--'} min (HIGH RISK)`, {
         sticky: true,
       });
       normalLine.addTo(routeLayerGroupRef.current);
     }
 
     // 2. Recommended Safe Route (Solid Green with Glow)
-    if (routeData.recommended_route && routeData.recommended_route.coordinates.length > 0) {
-      L.polyline(routeData.recommended_route.coordinates, {
+    if (showSafeRoute && safeCoordinates.length > 1) {
+      L.polyline(safeCoordinates, {
         color: '#10b981',
         weight: 9,
         opacity: 0.35,
       }).addTo(routeLayerGroupRef.current);
 
-      const safeLine = L.polyline(routeData.recommended_route.coordinates, {
+      const safeLine = L.polyline(safeCoordinates, {
         color: '#34d399',
         weight: 5,
         opacity: 1.0,
       });
-      safeLine.bindTooltip(`🛡️ FLOOD-X Safe Route: ${routeData.recommended_route.estimated_duration_min} min (CLEAR)`, {
+      safeLine.bindTooltip(`🛡️ FLOOD-X Safe Route: ${routeData.recommended_route?.estimated_duration_min ?? '--'} min (CLEAR)`, {
         sticky: true,
       });
       safeLine.addTo(routeLayerGroupRef.current);
     }
 
-    // 3. Origin / Dest Pins
-    L.circleMarker(routeData.origin.coords, {
-      radius: 8,
-      color: '#ffffff',
-      fillColor: '#3b82f6',
-      fillOpacity: 1.0,
-      weight: 2.5,
-    }).bindTooltip(`START: ${routeData.origin.name}`).addTo(routeLayerGroupRef.current);
+    // Route endpoint pins follow the route visibility controls.
+    if (showNormalRoute || showSafeRoute) {
+      L.circleMarker(routeData.origin.coords, {
+        radius: 8,
+        color: '#ffffff',
+        fillColor: '#3b82f6',
+        fillOpacity: 1.0,
+        weight: 2.5,
+      }).bindTooltip(`START: ${routeData.origin.name}`).addTo(routeLayerGroupRef.current);
 
-    L.circleMarker(routeData.destination.coords, {
-      radius: 8,
-      color: '#ffffff',
-      fillColor: '#10b981',
-      fillOpacity: 1.0,
-      weight: 2.5,
-    }).bindTooltip(`DESTINATION: ${routeData.destination.name}`).addTo(routeLayerGroupRef.current);
-  }, [routeData]);
+      L.circleMarker(routeData.destination.coords, {
+        radius: 8,
+        color: '#ffffff',
+        fillColor: '#10b981',
+        fillOpacity: 1.0,
+        weight: 2.5,
+      }).bindTooltip(`DESTINATION: ${routeData.destination.name}`).addTo(routeLayerGroupRef.current);
+    }
+
+    if (!routeData.recommended_route && routeData.normal_route) {
+      L.popup({ closeButton: false, closeOnClick: false, autoClose: false, className: 'floodx-route-warning' })
+        .setLatLng(routeData.destination.coords)
+        .setContent('<strong>No safe FLOOD-X route</strong><br/>The safest available road is still above the vehicle safety limit.')
+        .openOn(mapInstanceRef.current!);
+    }
+  }, [routeData, showNormalRoute, showSafeRoute]);
 
   return (
     <div className="relative w-full h-full min-h-[500px] flex-1 bg-slate-950 overflow-hidden">
       {/* Map Container */}
       <div ref={mapContainerRef} className="w-full h-full" />
+      {routePickMode && (
+        <div className="absolute left-1/2 top-4 z-[1000] -translate-x-1/2 rounded-lg border border-cyan-400/50 bg-slate-950/90 px-3 py-2 text-xs font-semibold text-cyan-200 shadow-xl">
+          Click the map to set your {routePickMode === 'origin' ? 'starting point' : 'destination'}
+        </div>
+      )}
+      {routeLoading && (
+        <div className="absolute left-1/2 top-16 z-[1000] -translate-x-1/2 rounded-lg border border-emerald-400/50 bg-slate-950/90 px-3 py-2 text-xs font-semibold text-emerald-200 shadow-xl">
+          Updating safe route...
+        </div>
+      )}
 
-      <div className="absolute top-4 left-4 z-20 rounded-lg border border-cyan-500/30 bg-slate-950/85 px-3 py-2 text-xs shadow-lg backdrop-blur">
+      <div className="absolute top-4 left-4 z-[1000] rounded-lg border border-cyan-500/30 bg-slate-950/85 px-3 py-2 text-xs shadow-lg backdrop-blur">
         <div className="font-bold text-cyan-300">India-wide flood overview</div>
         <div className="text-[10px] text-slate-400">Select a city or search any Indian place for local context</div>
       </div>
 
       {/* Layer Control Pills (Top Right) */}
-      <div className="absolute top-4 right-4 z-20 flex flex-col gap-2">
+      <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2">
+        <button
+          onClick={() => setShowRiskPoints((visible) => !visible)}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold backdrop-blur shadow-lg border transition flex items-center gap-1.5 ${showRiskPoints ? 'bg-red-500/20 text-red-300 border-red-500/50' : 'bg-slate-900/80 text-slate-400 border-slate-700/60'}`}
+        >
+          <span className={`w-2 h-2 rounded-full ${showRiskPoints ? 'bg-red-400' : 'bg-slate-500'}`} />
+          <span>Risk Points {showRiskPoints ? 'ON' : 'OFF'}</span>
+        </button>
         <button
           onClick={onToggleDrainage}
           className={`px-3 py-1.5 rounded-lg text-xs font-semibold backdrop-blur shadow-lg border transition flex items-center gap-1.5 ${
@@ -365,13 +574,19 @@ export const FloodMap: React.FC<FloodMapProps> = ({
           <span>Dataset Points</span>
         </button>
 
-        <button onClick={onToggleFloodZones} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-500/20 text-red-300 border border-red-500/50">
+        <button onClick={onToggleFloodZones} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${showFloodZones ? 'bg-red-500/20 text-red-300 border-red-500/50' : 'bg-slate-900/80 text-slate-400 border-slate-700/60'}`}>
           <span>Flood Zones {showFloodZones ? 'ON' : 'OFF'}</span>
         </button>
-        <button onClick={onToggleSafeCorridors} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50">
-          <span>Safe Roads {showSafeCorridors ? 'ON' : 'OFF'}</span>
+        <button onClick={() => setShowSatelliteImagery((visible) => !visible)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${showSatelliteImagery ? 'bg-sky-500/20 text-sky-300 border-sky-500/50' : 'bg-slate-900/80 text-slate-400 border-slate-700/60'}`}>
+          <span>{showSatelliteImagery ? 'Satellite ON' : 'Street Map'}</span>
         </button>
-        <button onClick={onToggleEmergencyAssets} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/50">
+        <button onClick={() => setShowSafeRoute((visible) => !visible)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${showSafeRoute ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50' : 'bg-slate-900/80 text-slate-400 border-slate-700/60'}`}>
+          <span>FLOOD-X Route {showSafeRoute ? 'ON' : 'OFF'}</span>
+        </button>
+        <button onClick={() => setShowNormalRoute((visible) => !visible)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${showNormalRoute ? 'bg-red-500/20 text-red-300 border-red-500/50' : 'bg-slate-900/80 text-slate-400 border-slate-700/60'}`}>
+          <span>Normal Route {showNormalRoute ? 'ON' : 'OFF'}</span>
+        </button>
+        <button onClick={onToggleEmergencyAssets} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${showEmergencyAssets ? 'bg-blue-500/20 text-blue-300 border-blue-500/50' : 'bg-slate-900/80 text-slate-400 border-slate-700/60'}`}>
           <span>Emergency Assets {showEmergencyAssets ? 'ON' : 'OFF'}</span>
         </button>
 
@@ -388,34 +603,47 @@ export const FloodMap: React.FC<FloodMapProps> = ({
         </button>
       </div>
 
-      {/* Section 8 Baseline Risk Legend */}
-      <div className="absolute top-16 left-4 z-[2000] bg-slate-950 border border-slate-500 p-3 rounded-lg text-xs shadow-2xl space-y-1.5 pointer-events-auto ring-2 ring-slate-950/90">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-          Flood risk legend
-        </span>
-        <div className="flex items-center gap-2">
-          <span className="w-3 h-1.5 rounded bg-emerald-500" />
-          <span className="text-slate-300">Low (&lt;0.30 norm / &lt;10cm)</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3 h-1.5 rounded bg-amber-400" />
-          <span className="text-slate-300">Medium (0.30-0.60 norm)</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3 h-1.5 rounded bg-orange-500" />
-          <span className="text-slate-300">High (0.60-0.80 norm)</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3 h-1.5 rounded bg-red-500" />
-          <span className="text-slate-300">Critical (&gt;0.80 norm / Impassable)</span>
-        </div>
-
-        {citizenReports.length > 0 && (
-          <div className="pt-1.5 border-t border-slate-800 flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 border border-white" />
-            <span className="text-amber-300 text-[11px]">Citizen Field Pins</span>
+      {routeData?.recommended_route && (
+        <div className="absolute bottom-28 left-4 z-[1000] flex items-center gap-2">
+          <div className="rounded-lg border border-emerald-400/50 bg-emerald-950/90 px-3 py-2 text-[11px] font-semibold text-emerald-200 shadow-xl backdrop-blur">
+            Dynamic safe route
           </div>
-        )}
+          <button
+            type="button"
+            onClick={openGoogleMapsRoute}
+            className="flex items-center gap-2 rounded-lg border border-cyan-400/50 bg-cyan-950/90 px-3 py-2 text-xs font-bold text-cyan-200 shadow-xl backdrop-blur transition hover:bg-cyan-900"
+            title="Open the FLOOD-X safe route in Google Maps navigation"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Navigate
+          </button>
+        </div>
+      )}
+
+      <div className="absolute bottom-28 right-4 z-[1000] w-64 rounded-xl border border-slate-700/80 bg-slate-950/90 p-3 text-xs shadow-2xl backdrop-blur ring-1 ring-slate-800/80">
+        <div className="mb-2 flex items-center justify-between border-b border-slate-800 pb-2">
+          <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300">Map legend</span>
+          <span className="rounded-full border border-slate-600 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-slate-400">{legendItems.filter((item) => item.active).length} on</span>
+        </div>
+        <div className="space-y-2">
+          {legendItems.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              onClick={item.onToggle}
+              className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-2 py-1.5 text-left transition hover:border-slate-600 hover:bg-slate-800/80"
+            >
+              <div className="flex items-center gap-2">
+                <span className={`h-2.5 w-2.5 rounded-full ${item.color} ${item.active ? 'opacity-100' : 'opacity-40'}`} />
+                <span className={item.active ? 'text-slate-200' : 'text-slate-500'}>{item.label}</span>
+                {'detail' in item && <span className="text-[9px] text-slate-500">{item.detail}</span>}
+              </div>
+              <span className={`text-[9px] uppercase tracking-wide ${item.active ? 'text-emerald-300' : 'text-slate-500'}`}>
+                {item.active ? 'On' : 'Off'}
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

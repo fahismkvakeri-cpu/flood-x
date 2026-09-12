@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { KPISummary } from './components/KPISummary';
 import { FloodMap } from './components/FloodMap';
@@ -29,6 +29,10 @@ export const App: React.FC = () => {
   const [blockagePct, setBlockagePct] = useState<number>(0);
   const [selectedRoad, setSelectedRoad] = useState<RoadPrediction | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<string>('AMBULANCE');
+  const [routeOrigin, setRouteOrigin] = useState<{ name: string; coords: [number, number] } | null>(null);
+  const [routeDestination, setRouteDestination] = useState<{ name: string; coords: [number, number] } | null>(null);
+  const [routePickMode, setRoutePickMode] = useState<'origin' | 'destination' | null>(null);
+  const [routeError, setRouteError] = useState<string | null>(null);
   const [showDrainage, setShowDrainage] = useState<boolean>(true);
   const [showCitizenPins, setShowCitizenPins] = useState<boolean>(true);
   const [sidebarTab, setSidebarTab] = useState<'routing' | 'whatif' | 'layers'>('routing');
@@ -45,6 +49,8 @@ export const App: React.FC = () => {
 
   const [predictData, setPredictData] = useState<FloodPredictResponse | null>(null);
   const [routeData, setRouteData] = useState<RouteCalculationResponse | null>(null);
+  const [routeLoading, setRouteLoading] = useState<boolean>(false);
+  const routeRequestRef = useRef(0);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [indiaRiskPoints, setIndiaRiskPoints] = useState<IndiaRiskPoint[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -52,9 +58,9 @@ export const App: React.FC = () => {
   const [mapStatus, setMapStatus] = useState<string | null>(null);
   const [showDatasetPoints, setShowDatasetPoints] = useState<boolean>(true);
   const [showFloodZones, setShowFloodZones] = useState<boolean>(true);
-  const [showSafeCorridors, setShowSafeCorridors] = useState<boolean>(true);
   const [showEmergencyAssets, setShowEmergencyAssets] = useState<boolean>(true);
   const [placeDetail, setPlaceDetail] = useState<PlaceDetail | null>(null);
+  const [selectedRiskPoint, setSelectedRiskPoint] = useState<IndiaRiskPoint | null>(null);
 
   // Fetch flood predictions (Section 21)
   const fetchPredictions = async () => {
@@ -81,13 +87,20 @@ export const App: React.FC = () => {
 
   // Fetch emergency routing (Section 10 & 21)
   const fetchRoute = async () => {
+    const requestId = ++routeRequestRef.current;
+    setRouteLoading(true);
+    setRouteData(null);
     try {
       const res = await fetch('/api/route', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          origin_id: 'J_ASIAN_HEART',
-          destination_id: 'J_BAIL_BAZAR',
+          origin_id: routeOrigin ? undefined : 'J_ASIAN_HEART',
+          destination_id: routeDestination ? undefined : 'J_BAIL_BAZAR',
+          origin_name: routeOrigin?.name || 'Asian Heart Hospital (BKC)',
+          destination_name: routeDestination?.name || 'Bail Bazar Emergency Zone',
+          origin_coords: routeOrigin?.coords || [19.0665, 72.8655],
+          destination_coords: routeDestination?.coords || [19.0805, 72.8845],
           vehicle_type: selectedVehicle,
           forecast_horizon_min: horizonMin,
           rainfall_scenario_mm: rainScenarioMm,
@@ -96,10 +109,22 @@ export const App: React.FC = () => {
       });
       if (res.ok) {
         const data = await res.json();
+        if (requestId !== routeRequestRef.current) return;
         setRouteData(data);
+        setRouteError(data.recommended_route ? null : data.summary?.recommendation || 'No safe route is available under the current flood conditions.');
+      } else {
+        if (requestId !== routeRequestRef.current) return;
+        const error = await res.json().catch(() => null);
+        setRouteData(null);
+        setRouteError(error?.detail || 'No safe route is available for these locations under the current flood conditions.');
       }
     } catch (err) {
+      if (requestId !== routeRequestRef.current) return;
       console.error('Error calculating routes:', err);
+      setRouteData(null);
+      setRouteError('Route service is unavailable. Start the backend and try again.');
+    } finally {
+      if (requestId === routeRequestRef.current) setRouteLoading(false);
     }
   };
 
@@ -170,16 +195,16 @@ export const App: React.FC = () => {
 
   const fetchPlaceDetail = async () => {
     try {
-      const res = await fetch(`/api/place/detail?city=Mumbai&rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`);
+      const res = await fetch(`/api/india/operational-layers?rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`);
       if (res.ok) setPlaceDetail(await res.json());
     } catch (err) {
-      console.error('Error fetching Mumbai operational layers:', err);
+      console.error('Error fetching India-wide operational layers:', err);
     }
   };
 
   useEffect(() => {
     Promise.all([fetchPredictions(), fetchRoute(), fetchExposure(), fetchAlerts(), fetchReports(), fetchLayers(), fetchIndiaOverview(), fetchPlaceDetail()]);
-  }, [horizonMin, rainScenarioMm, blockagePct, selectedVehicle]);
+  }, [horizonMin, rainScenarioMm, blockagePct, selectedVehicle, routeOrigin, routeDestination]);
 
   // Section 27.1: Geolocation Handler
   const handleUseMyLocation = () => {
@@ -207,11 +232,41 @@ export const App: React.FC = () => {
   // Landmark Selection from Search
   const handleSelectLandmark = (coords: [number, number], name: string) => {
     setFlyToCoords(coords);
+    if (routePickMode === 'origin') {
+      setRouteOrigin({ name, coords });
+      setRoutePickMode(null);
+      return;
+    }
+    if (routePickMode === 'destination') {
+      setRouteDestination({ name, coords });
+      setRoutePickMode(null);
+      return;
+    }
+    if (!routeOrigin) {
+      setRouteOrigin({ name, coords });
+      return;
+    }
+    if (!routeDestination) {
+      setRouteDestination({ name, coords });
+      return;
+    }
+
+    // Reset the selection flow and start a fresh origin->destination pair.
+    if (routeOrigin && routeDestination) {
+      setRouteOrigin({ name, coords });
+      setRouteDestination(null);
+      return;
+    }
+
     // If landmark matches a monitored road, select it
     if (predictData) {
       const found = predictData.roads.find((r) => r.name.toLowerCase().includes(name.toLowerCase()));
       if (found) setSelectedRoad(found);
     }
+  };
+
+  const handleSelectMapLocation = (coords: [number, number]) => {
+    handleSelectLandmark(coords, `Map point ${coords[0].toFixed(4)}, ${coords[1].toFixed(4)}`);
   };
 
   // SIH 10-Step Demo Automation Script (Section 14)
@@ -336,6 +391,7 @@ export const App: React.FC = () => {
                 setSelectedRoad(null);
               }}
               routeData={routeData}
+              routeLoading={routeLoading}
               showDrainageLayer={showDrainage}
               showCitizenReports={showCitizenPins}
               onToggleDrainage={() => setShowDrainage(!showDrainage)}
@@ -347,12 +403,14 @@ export const App: React.FC = () => {
               onToggleDatasetPoints={() => setShowDatasetPoints((visible) => !visible)}
               placeDetail={placeDetail}
               showFloodZones={showFloodZones}
-              showSafeCorridors={showSafeCorridors}
               showEmergencyAssets={showEmergencyAssets}
               onToggleFloodZones={() => setShowFloodZones((visible) => !visible)}
-              onToggleSafeCorridors={() => setShowSafeCorridors((visible) => !visible)}
               onToggleEmergencyAssets={() => setShowEmergencyAssets((visible) => !visible)}
+              onSelectRiskPoint={setSelectedRiskPoint}
+              routePickMode={routePickMode}
+              onSelectMapLocation={handleSelectMapLocation}
             />
+
           ) : (
             <div className="flex-1 flex items-center justify-center bg-slate-950 p-6">
               <div className="max-w-md rounded-xl border border-red-500/30 bg-red-950/30 p-5 text-center shadow-xl">
@@ -369,6 +427,36 @@ export const App: React.FC = () => {
                   </button>
                 )}
               </div>
+            </div>
+          )}
+
+          {selectedRiskPoint && predictData && (
+            <div className="absolute bottom-4 left-4 z-[700] w-80 max-w-[calc(100%-2rem)] rounded-xl border border-red-400/40 bg-slate-950/90 p-4 text-xs shadow-2xl backdrop-blur ring-1 ring-slate-800/80">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-cyan-300">Why this region floods</p>
+                  <h3 className="mt-1 text-sm font-bold text-white">{selectedRiskPoint.name}</h3>
+                  <p className="mt-1 text-slate-400">{selectedRiskPoint.risk_level} risk · {selectedRiskPoint.predicted_depth_cm} cm projected depth</p>
+                </div>
+                <button onClick={() => setSelectedRiskPoint(null)} className="text-lg leading-none text-slate-400 hover:text-white" aria-label="Close explanation">×</button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {[
+                  ['Rainfall intensity', selectedRiskPoint.rainfall_mm ? Math.min(100, selectedRiskPoint.rainfall_mm / 3) : 35, selectedRiskPoint.rainfall_mm ? `${selectedRiskPoint.rainfall_mm} mm recorded` : 'Heavy rainfall scenario'],
+                  ['Low elevation', selectedRiskPoint.elevation_m !== undefined ? Math.max(5, 100 - selectedRiskPoint.elevation_m / 90) : 45, selectedRiskPoint.elevation_m !== undefined ? `${selectedRiskPoint.elevation_m} m elevation` : 'Terrain data unavailable'],
+                  ['River discharge', selectedRiskPoint.river_discharge_m3s ? Math.min(100, selectedRiskPoint.river_discharge_m3s / 50) : 30, selectedRiskPoint.river_discharge_m3s ? `${selectedRiskPoint.river_discharge_m3s} m³/s` : 'Catchment flow contributes'],
+                  ['Historical flooding', selectedRiskPoint.flood_occurred ? 85 : 25, selectedRiskPoint.flood_occurred ? 'Flood observed in dataset' : 'No flood label in this record'],
+                ].map(([label, value, detail]) => (
+                  <div key={String(label)}>
+                    <div className="flex justify-between gap-2 text-[11px]"><span className="text-slate-300">{label}</span><span className="text-red-300">{Math.round(Number(value))}%</span></div>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-red-500" style={{ width: `${Math.min(100, Number(value))}%` }} /></div>
+                    <p className="mt-0.5 text-[10px] text-slate-500">{detail}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 border-t border-slate-800 pt-2 text-[11px] leading-relaxed text-slate-300">
+                Flooding is most likely where intense rain exceeds drainage capacity, water collects in low terrain, and river or upstream discharge adds flow. This is a dataset-based explanation, not an official warning.
+              </p>
             </div>
           )}
 
@@ -454,9 +542,11 @@ export const App: React.FC = () => {
             <div className="p-3 space-y-4 flex-1">
               {sidebarTab === 'routing' && (
                 <EmergencyRoutingPanel
-                  routeData={routeData}
-                  selectedVehicle={selectedVehicle}
-                  onSelectVehicle={(v) => setSelectedVehicle(v)}
+                  routeOrigin={routeOrigin}
+                  routeDestination={routeDestination}
+                  routePickMode={routePickMode}
+                  routeError={routeError}
+                  onStartPicking={(mode) => setRoutePickMode(mode)}
                   onRecalculateRoute={fetchRoute}
                 />
               )}
@@ -467,6 +557,7 @@ export const App: React.FC = () => {
                   onRainfallChange={(v) => setRainScenarioMm(v)}
                   blockagePct={blockagePct}
                   onBlockageChange={(v) => setBlockagePct(v)}
+                  drainage={predictData?.drainage}
                   onReset={() => {
                     setRainScenarioMm(85);
                     setBlockagePct(0);

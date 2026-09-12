@@ -34,6 +34,10 @@ class FloodMLModel:
         drain_utilization = pipe_data["utilization_pct"] if pipe_data else 100.0
         is_surcharged = pipe_data["status"] == "SURCHARGED" if pipe_data else False
         drain_overflow = pipe_data["overflow_m3s"] if pipe_data else 0.0
+        drain_node = drain_sim_result["nodes"].get(pipe_data["source"]) if pipe_data else None
+        estimated_water_level = drain_node["estimated_water_level_cm"] if drain_node else 0.0
+        retained_volume = drain_node["retained_volume_m3"] if drain_node else 0.0
+        drainage_effectiveness = drain_node["drainage_effectiveness_pct"] if drain_node else 0.0
 
         # 3. Terrain & Surface characteristics (Copernicus DEM & OSM)
         elevation = road["baseline_elevation"]  # meters AMSL
@@ -99,7 +103,11 @@ class FloodMLModel:
         # =========================================================================
         surface_depth_cm = (accumulated_rain * imperviousness * 0.12) * (1.0 - min(0.5, slope * 25.0))
         elevation_factor = max(0.0, (6.8 - elevation) * 5.2)
-        surcharge_cm = (max(0.0, drain_utilization - 90.0) * 0.26) + (drain_overflow * 14.0)
+        surcharge_cm = (
+            (max(0.0, drain_utilization - 90.0) * 0.26)
+            + (drain_overflow * 14.0)
+            + (estimated_water_level * 0.35)
+        )
         flow_acc_factor = (flow_acc / 9200.0) * 8.5
         
         raw_depth = surface_depth_cm + elevation_factor + surcharge_cm + flow_acc_factor
@@ -167,6 +175,12 @@ class FloodMLModel:
             "flood_duration_hrs": flood_duration_hrs,
             "drain_utilization_pct": drain_utilization,
             "drain_status": pipe_data["status"] if pipe_data else "NORMAL",
+            "drainage_area_id": drain_node["id"] if drain_node else None,
+            "drainage_area_name": drain_node["name"] if drain_node else "Unknown drainage area",
+            "drainage_water_level_cm": estimated_water_level,
+            "drainage_retained_volume_m3": retained_volume,
+            "drainage_effectiveness_pct": drainage_effectiveness,
+            "drainage_level_status": drain_node["level_status"] if drain_node else "UNKNOWN",
             "confidence_pct": confidence,
             "is_closed": predicted_depth_cm >= 25.0 or norm_risk >= 0.80,
             "explainability": feature_percentages,

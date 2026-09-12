@@ -52,6 +52,7 @@ Open your browser and navigate to:
 - **Interactive GIS Map**: Click any road to inspect street details, water depth curves, and XAI cause breakdowns.
 - **0–3h Timeline Slider**: Scrub from `NOW` to `+180m` or click `SIMULATE 0-3H` to watch roads turn from Green $\to$ Yellow $\to$ Orange $\to$ Red.
 - **What-If Sandbox**: Adjust rainfall storms ($50\text{ mm}$ to $150\text{ mm}$) and drain blockage ($0\%$ to $75\%$) to observe immediate flood expansion.
+- **Drainage Effectiveness**: Inspect each drainage area for estimated retained floodwater, modeled water level, conveyed runoff, and effectiveness. `WATER_LEVEL_RISING` means the modeled local storage is receiving more water than the connected network can convey.
 - **Flood-Safe Emergency Routing**: Compare standard shortest route (trapped in $74\text{ cm}$ water) vs. recommended elevated corridor ($100\%$ clear, $3$ flooded segments avoided).
 - **Interactive SIH Judge Walkthrough**: Click the minute-by-minute demo buttons in the top banner (`Min 0-1`, `Min 1-2`, `Min 2-3`, `Min 3-4`, `Min 5`).
 
@@ -86,3 +87,7 @@ Outputs:
 - **Minute 3–4 (Explain & Simulate)**: Click LBS Marg / Kurla road to reveal $74\text{ cm}$ depth, $134\%$ surcharge, and XAI factor attribution. Adjust drain blockage slider to $40\%$ to demonstrate backwater ponding expansion.
 - **Minute 5 (Emergency Safe Routing)**: Select Ambulance route from Asian Heart to Bail Bazar. Show normal route trapped in deep water, while FLOOD-X safe corridor routes via elevated SCLR bypass.
 - **Closing Punchline**: *"We don't just predict where water will go. We predict where people can safely go."*
+
+### Drainage diagnostic assumptions
+
+The drainage digital twin reports a transparent engineering estimate, not a surveyed water-level measurement. It uses the pilot catchment assumption of 6.5 hectares per node and a one-hour simulation interval to convert unmet runoff into retained volume and estimated surface level. Effectiveness is the percentage of generated runoff conveyed by the modeled network; blockage and pipe capacity reduce that percentage. Calibrated levels require node storage geometry, invert levels, tidal boundary conditions, and observed time-series data.
