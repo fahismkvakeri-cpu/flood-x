@@ -1,0 +1,114 @@
+# ==========================================
+# React.js / Node.js Frontend
+# ==========================================
+
+# Dependencies
+frontend/node_modules/
+frontend/.pnp/
+frontend/.pnp.js
+
+# Build output
+frontend/dist/
+frontend/build/
+
+# Vite
+frontend/.vite/
+
+# React environment files
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Environment example files are allowed
+!frontend/.env.example
+
+# Logs
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+
+# Cache
+frontend/.cache/
+frontend/.parcel-cache/
+
+# Testing
+frontend/coverage/
+
+# ==========================================
+# Python Backend
+# ==========================================
+
+# Python cache
+backend/__pycache__/
+backend/**/__pycache__/
+
+# Compiled Python
+backend/*.py[cod]
+backend/**/*.py[cod]
+
+# Virtual environments
+backend/venv/
+backend/.venv/
+backend/env/
+backend/.env/
+
+# Python environment files
+backend/.env
+backend/.env.local
+backend/.env.development
+backend/.env.production
+
+# Environment example file
+!backend/.env.example
+
+# Distribution
+backend/build/
+backend/dist/
+backend/*.egg-info/
+backend/**/*.egg-info/
+
+# Testing
+backend/.pytest_cache/
+backend/.coverage
+backend/htmlcov/
+backend/.tox/
+
+# Type checking
+backend/.mypy_cache/
+backend/.pytype/
+
+# Jupyter Notebook
+backend/.ipynb_checkpoints/
+
+# Python logs
+backend/*.log
+
+# ==========================================
+# General
+# ==========================================
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# Secrets
+*.pem
+*.key
+*.secret
