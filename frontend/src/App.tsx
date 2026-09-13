@@ -13,6 +13,8 @@ import { PredictionComparisonCard } from './components/PredictionComparisonCard'
 import { ResponsePlanner } from './components/ResponsePlanner';
 import { CriticalLocationPredictor } from './components/CriticalLocationPredictor';
 import { AreaAnalysisPanel } from './components/AreaAnalysisPanel';
+import { AppPage, MultiPageView } from './components/MultiPageView';
+import FloodHero from './components/ui/scroll-locked-video-hero';
 import {
   FloodPredictResponse,
   RoadPrediction,
@@ -27,6 +29,7 @@ import {
   ObservationFusionResponse,
   CriticalLocationsResponse,
   AreaAnalysisResponse,
+  LocationBriefResponse,
   UserLayer,
   IndiaRiskPoint,
   PlaceDetail,
@@ -34,6 +37,10 @@ import {
 import { Navigation, Sliders, Sparkles, Layers, Siren } from 'lucide-react';
 
 export const App: React.FC = () => {
+  const [activePage, setActivePage] = useState<AppPage>(() => {
+    const page = window.location.hash.replace('#', '') as AppPage;
+    return ['overview', 'brief', 'response', 'routing', 'scenarios', 'community'].includes(page) ? page : 'overview';
+  });
   const [horizonMin, setHorizonMin] = useState<number>(60);
   const [rainScenarioMm, setRainScenarioMm] = useState<number>(85);
   const [blockagePct, setBlockagePct] = useState<number>(0);
@@ -65,6 +72,7 @@ export const App: React.FC = () => {
   const [aoiPolygon, setAoiPolygon] = useState<[number, number][]>([]);
   const [aoiDrawing, setAoiDrawing] = useState(false);
   const [areaAnalysis, setAreaAnalysis] = useState<AreaAnalysisResponse | null>(null);
+  const [locationBrief, setLocationBrief] = useState<LocationBriefResponse | null>(null);
 
   const [predictData, setPredictData] = useState<FloodPredictResponse | null>(null);
   const [routeData, setRouteData] = useState<RouteCalculationResponse | null>(null);
@@ -80,6 +88,21 @@ export const App: React.FC = () => {
   const [showEmergencyAssets, setShowEmergencyAssets] = useState<boolean>(true);
   const [placeDetail, setPlaceDetail] = useState<PlaceDetail | null>(null);
   const [selectedRiskPoint, setSelectedRiskPoint] = useState<IndiaRiskPoint | null>(null);
+
+  const navigateToPage = (page: string) => {
+    const nextPage = page as AppPage;
+    window.location.hash = nextPage === 'overview' ? '' : nextPage;
+    setActivePage(nextPage);
+  };
+
+  useEffect(() => {
+    const syncPage = () => {
+      const page = window.location.hash.replace('#', '') as AppPage;
+      setActivePage(['overview', 'brief', 'response', 'routing', 'scenarios', 'community'].includes(page) ? page : 'overview');
+    };
+    window.addEventListener('hashchange', syncPage);
+    return () => window.removeEventListener('hashchange', syncPage);
+  }, []);
 
   // Fetch flood predictions (Section 21)
   const fetchPredictions = async () => {
@@ -349,18 +372,31 @@ export const App: React.FC = () => {
           const coords: [number, number] = [pos.coords.latitude, pos.coords.longitude];
           setUserLocation(coords);
           setFlyToCoords(coords);
+          fetchLocationBrief(coords[0], coords[1]);
         },
         () => {
           // Fallback to Kurla Station Hub in pilot area
           const fallback: [number, number] = [19.0685, 72.8790];
           setUserLocation(fallback);
           setFlyToCoords(fallback);
+          fetchLocationBrief(fallback[0], fallback[1]);
         }
       );
     } else {
       const fallback: [number, number] = [19.0685, 72.8790];
       setUserLocation(fallback);
       setFlyToCoords(fallback);
+      fetchLocationBrief(fallback[0], fallback[1]);
+    }
+  };
+
+  const fetchLocationBrief = async (latitude: number, longitude: number) => {
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+    try {
+      const res = await fetch(`/api/brief/location?latitude=${latitude}&longitude=${longitude}&t=${horizonMin}&rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`);
+      if (res.ok) setLocationBrief(await res.json());
+    } catch (err) {
+      console.error('Error fetching location brief:', err);
     }
   };
 
@@ -446,6 +482,62 @@ export const App: React.FC = () => {
     }
   };
 
+  if (activePage === 'brief') {
+    return <FloodHero locationBrief={locationBrief} onEnterCommandCenter={() => navigateToPage('overview')} onUseLocation={handleUseMyLocation} onApplyCoordinates={fetchLocationBrief} />;
+  }
+
+  if (activePage !== 'overview') {
+    return (
+      <div className="flex min-h-screen flex-col bg-slate-950">
+        <Navbar
+          activeAlertCount={alerts.length}
+          lastUpdate="17:42:00 IST"
+          onUseMyLocation={handleUseMyLocation}
+          onOpenUploadModal={() => setShowUploadModal(true)}
+          onOpenReportModal={() => setShowReportModal(true)}
+          onSelectLandmark={handleSelectLandmark}
+          activePage={activePage}
+          onNavigate={navigateToPage}
+        />
+        <AlertsBanner alerts={alerts} onSelectAlert={handleSelectAlert} onUpdateAlert={updateAlertWorkflow} />
+        <MultiPageView
+          page={activePage}
+          criticalLocations={criticalLocations}
+          responsePlan={responsePlan}
+          operationsData={operationsData}
+          evacuationData={evacuationData}
+          routeOrigin={routeOrigin}
+          routeDestination={routeDestination}
+          routePickMode={routePickMode}
+          routeError={routeError}
+          routeData={routeData}
+          onStartPicking={(mode) => { setRoutePickMode(mode); navigateToPage('overview'); }}
+          onRecalculateRoute={fetchRoute}
+          rainfallScenarioMm={rainScenarioMm}
+          onRainfallChange={setRainScenarioMm}
+          blockagePct={blockagePct}
+          onBlockageChange={setBlockagePct}
+          drainage={predictData?.drainage || null}
+          interventionImpact={interventionImpact}
+          onEvaluateIntervention={evaluateIntervention}
+          onResetScenario={() => { setRainScenarioMm(85); setBlockagePct(0); setInterventionImpact(null); }}
+          citizenReports={citizenReports}
+          userLayers={userLayers}
+          onOpenUpload={() => setShowUploadModal(true)}
+          onOpenReport={() => setShowReportModal(true)}
+          onSelectCriticalLocation={(location) => {
+            const road = predictData?.roads.find((candidate) => candidate.road_id === location.road_id);
+            if (road) setSelectedRoad(road);
+            setFlyToCoords(location.coords);
+            navigateToPage('overview');
+          }}
+        />
+        <CitizenReportModal isOpen={showReportModal} onClose={() => setShowReportModal(false)} onSubmitSuccess={(newReport) => { setCitizenReports([newReport, ...citizenReports]); setShowReportModal(false); }} defaultCoords={userLocation || [19.0720, 72.8760]} />
+        <DataUploadModal isOpen={showUploadModal} currentLocation={userLocation} onClose={() => setShowUploadModal(false)} onLayerApplied={(newLayer) => { setUserLayers([...userLayers, { ...newLayer, user_location: userLocation ? { latitude: userLocation[0], longitude: userLocation[1], label: 'Browser current location' } : null }]); setShowUploadModal(false); }} />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-950">
       {/* Top Navigation */}
@@ -456,6 +548,8 @@ export const App: React.FC = () => {
         onOpenUploadModal={() => setShowUploadModal(true)}
         onOpenReportModal={() => setShowReportModal(true)}
         onSelectLandmark={handleSelectLandmark}
+        activePage={activePage}
+        onNavigate={navigateToPage}
       />
 
       {/* Real-time Alerts Ticker */}
@@ -892,9 +986,10 @@ export const App: React.FC = () => {
 
       <DataUploadModal
         isOpen={showUploadModal}
+        currentLocation={userLocation}
         onClose={() => setShowUploadModal(false)}
         onLayerApplied={(newLayer) => {
-          setUserLayers([...userLayers, newLayer]);
+          setUserLayers([...userLayers, { ...newLayer, user_location: userLocation ? { latitude: userLocation[0], longitude: userLocation[1], label: 'Browser current location' } : null }]);
           setSidebarTab('layers');
         }}
       />

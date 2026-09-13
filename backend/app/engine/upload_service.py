@@ -206,7 +206,8 @@ class UploadService:
             "feature_count": len(parsed_features),
             "errors": errors,
             "warnings": warnings,
-            "dataset_name": metadata.get("dataset_name", filename)
+            "dataset_name": metadata.get("dataset_name", filename),
+            "user_location": metadata.get("user_location"),
         }
 
     def get_upload_preview(self, upload_id: str) -> Dict[str, Any]:
@@ -239,6 +240,8 @@ class UploadService:
             "active": True,
             "applied_at": time.strftime("%Y-%m-%dT%H:%M:%S")
         }
+        if upl["metadata"].get("user_location"):
+            layer["user_location"] = upl["metadata"]["user_location"]
         save_layer(layer)
         return {
             "status": "APPLIED",

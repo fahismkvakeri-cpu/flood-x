@@ -157,6 +157,22 @@ export interface AreaAnalysisResponse {
   summary: string;
 }
 
+export interface LocationBriefResponse {
+  location: { latitude: number; longitude: number };
+  nearest_road: { road_id: string; name: string; distance_km: number };
+  risk_level: 'Low' | 'Medium' | 'High' | 'Critical';
+  risk_score: number;
+  predicted_depth_cm: number;
+  depth_range_cm: [number, number];
+  flood_probability_pct: number;
+  confidence_pct: number;
+  time_to_flood_min: number | null;
+  hazard: { hazard_class: string; zone_name: string };
+  rainfall: { rain_3h: number; rain_24h: number; status: string };
+  recommended_action: string;
+  source: string;
+}
+
 export interface RouteSummary {
   path_nodes: string[];
   total_distance_km: number;
@@ -363,6 +379,7 @@ export interface UserLayer {
   features: any[];
   active: boolean;
   applied_at: string;
+  user_location?: { latitude: number; longitude: number; label?: string } | null;
 }
 
 export interface LandmarkLocation {

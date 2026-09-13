@@ -20,6 +20,7 @@ from app.main import (
     get_critical_locations,
     analyze_drawn_area,
     AreaAnalysisRequest,
+    get_location_brief,
     get_observation_fusion,
     update_alert_workflow,
     AlertWorkflowRequest,
@@ -166,6 +167,13 @@ def test_blueprint_apis():
     assert "exposure" in area and "bhuvan_hazard" in area
     print(f"[PASS] /api/analysis/area passed: {area['roads_in_area']} roads analyzed")
 
+    print("\n--- 7i. Testing User Location Brief ---")
+    location_brief = get_location_brief(latitude=19.0725, longitude=72.8765, t=60, rain_mm=85.0, blockage_pct=0.0)
+    assert location_brief["nearest_road"]["road_id"]
+    assert "predicted_depth_cm" in location_brief
+    assert "recommended_action" in location_brief
+    print(f"[PASS] /api/brief/location passed: nearest = {location_brief['nearest_road']['name']}")
+
     print("\n--- 7c. Testing AI Response Planner ---")
     response_plan = get_response_plan(t=90, rain_mm=120.0, blockage_pct=40.0)
     assert len(response_plan["actions"]) > 0
@@ -206,11 +214,13 @@ def test_blueprint_apis():
         dataset_name="Municipal Kurla Drain Survey",
         data_type="drainage",
         file_content=sample_csv,
-        source="Field Survey Team A"
+        source="Field Survey Team A",
+        user_location={"latitude": 19.0685, "longitude": 72.8790, "label": "Browser current location"},
     ))
     upload_id = upl_res["upload_id"]
     assert upl_res["status"] in ["VALID", "WARNING"]
     assert upl_res["feature_count"] == 2
+    assert upl_res["user_location"]["latitude"] == 19.0685
     print(f"[PASS] /api/upload/data passed: Upload ID = {upload_id}, Features = {upl_res['feature_count']}")
 
     val_res = validate_upload(upload_id)
@@ -227,6 +237,7 @@ def test_blueprint_apis():
 
     layers = list_user_layers()
     assert len(layers["layers"]) >= 1
+    assert any(layer.get("user_location", {}).get("longitude") == 72.8790 for layer in layers["layers"] if layer.get("user_location"))
     print(f"[PASS] /api/user/layers passed ({len(layers['layers'])} layers active)")
 
     print("\n--- 10. Verifying Static UI Bundle Presence ---")

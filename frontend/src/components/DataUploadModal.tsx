@@ -6,6 +6,7 @@ interface DataUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
   onLayerApplied: (layer: UserLayer) => void;
+  currentLocation?: [number, number] | null;
 }
 
 const SAMPLE_DRAINAGE_CSV = `drain_id,lat,lon,capacity_m3s,blockage_percent
@@ -23,6 +24,7 @@ export const DataUploadModal: React.FC<DataUploadModalProps> = ({
   isOpen,
   onClose,
   onLayerApplied,
+  currentLocation = null,
 }) => {
   const [datasetName, setDatasetName] = useState<string>('Kurla Ward Drainage Survey');
   const [dataType, setDataType] = useState<string>('drainage');
@@ -31,6 +33,11 @@ export const DataUploadModal: React.FC<DataUploadModalProps> = ({
   const [uploadStatus, setUploadStatus] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [applied, setApplied] = useState<boolean>(false);
+  const [uploadLocation, setUploadLocation] = useState<[number, number] | null>(currentLocation);
+
+  React.useEffect(() => {
+    if (currentLocation) setUploadLocation(currentLocation);
+  }, [currentLocation]);
 
   if (!isOpen) return null;
 
@@ -41,6 +48,11 @@ export const DataUploadModal: React.FC<DataUploadModalProps> = ({
       formData.append('dataset_name', datasetName);
       formData.append('data_type', dataType);
       formData.append('source', 'Municipal Field Team');
+      if (uploadLocation) {
+        formData.append('location_lat', String(uploadLocation[0]));
+        formData.append('location_lon', String(uploadLocation[1]));
+        formData.append('location_label', 'Browser current location');
+      }
       formData.append('file', new File([fileContent], fileName, { type: 'text/csv' }));
       const res = await fetch('/api/upload/data', {
         method: 'POST',
@@ -135,6 +147,30 @@ export const DataUploadModal: React.FC<DataUploadModalProps> = ({
                 <option value="rainfall">Local Rain Gauge Series</option>
                 <option value="roads">Custom Road Vectors</option>
               </select>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-semibold text-cyan-200">Dataset location context</div>
+                <div className="mt-1 text-[10px] text-slate-400">
+                  {uploadLocation ? `${uploadLocation[0].toFixed(5)}, ${uploadLocation[1].toFixed(5)}` : 'No browser location selected'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!navigator.geolocation) return;
+                  navigator.geolocation.getCurrentPosition(
+                    (position) => setUploadLocation([position.coords.latitude, position.coords.longitude]),
+                    () => setUploadLocation(null),
+                  );
+                }}
+                className="rounded border border-cyan-500/50 bg-cyan-500/10 px-2.5 py-1.5 text-[10px] font-bold text-cyan-200 hover:bg-cyan-500/20"
+              >
+                Use current location
+              </button>
             </div>
           </div>
 

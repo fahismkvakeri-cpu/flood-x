@@ -8,6 +8,8 @@ interface NavbarProps {
   onOpenUploadModal: () => void;
   onOpenReportModal: () => void;
   onSelectLandmark: (coords: [number, number], name: string) => void;
+  activePage: string;
+  onNavigate: (page: string) => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -17,6 +19,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenUploadModal,
   onOpenReportModal,
   onSelectLandmark,
+  activePage,
+  onNavigate,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -61,6 +65,26 @@ export const Navbar: React.FC<NavbarProps> = ({
           </p>
         </div>
       </div>
+
+      <nav className="order-3 flex w-full items-center gap-1 overflow-x-auto border-t border-slate-800 pt-2 lg:order-none lg:w-auto lg:border-0 lg:pt-0" aria-label="Primary navigation">
+        {[
+          ['overview', 'Overview'],
+          ['brief', 'Command Brief'],
+          ['response', 'Critical Response'],
+          ['routing', 'Safe Routing'],
+          ['scenarios', 'What-If Scenarios'],
+          ['community', 'Community Data'],
+        ].map(([page, label]) => (
+          <button
+            key={page}
+            type="button"
+            onClick={() => onNavigate(page)}
+            className={`whitespace-nowrap rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${activePage === page ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
 
       {/* Center Search Bar (Section 27.1) */}
       <div className="relative w-64 md:w-72">

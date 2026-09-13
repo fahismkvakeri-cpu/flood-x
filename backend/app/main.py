@@ -547,6 +547,7 @@ class CustomUploadPayload(BaseModel):
     data_type: str = "drainage"  # "drainage" | "roads" | "rainfall" | "flood_reports"
     file_content: str
     source: str = "Municipal field survey"
+    user_location: Optional[Dict[str, Any]] = None
 
 # =========================================================================
 # SECTION 11 & 21: STANDARDIZED BLUEPRINT REST APIS
@@ -759,6 +760,49 @@ def analyze_drawn_area(req: AreaAnalysisRequest):
         rain_mm=req.rainfall_scenario_mm,
         blockage_pct=req.blockage_percent,
     )
+
+
+@app.get("/api/brief/location")
+def get_location_brief(
+    latitude: float = Query(..., ge=6.0, le=37.0),
+    longitude: float = Query(..., ge=68.0, le=98.0),
+    t: int = Query(60, ge=0, le=180),
+    rain_mm: float = Query(85.0, ge=10.0, le=250.0),
+    blockage_pct: float = Query(0.0, ge=0.0, le=95.0),
+):
+    """Builds a concise flood brief for a user-selected coordinate."""
+    def distance_km(first: List[float], second: List[float]) -> float:
+        return math.hypot((first[0] - second[0]) * 111.0, (first[1] - second[1]) * 111.0)
+
+    flood_state = flood_ml_model.predict_all(t, rain_mm, blockage_pct)
+    nearest = min(
+        flood_state["roads"],
+        key=lambda road: distance_km([latitude, longitude], road["coords"][len(road["coords"]) // 2]),
+    )
+    hazard = bhuvan_hazard_geojson()
+    hazard_context = {"hazard_class": "Outside mapped hazard context", "zone_name": "User-selected location"}
+    point_hazard = __import__("backend.app.data.bhuvan_hazard", fromlist=["classify_point"]).classify_point(latitude, longitude)
+    hazard_context = {"hazard_class": point_hazard["hazard_class"], "zone_name": point_hazard["zone_name"]}
+    rainfall = gpm_imerg_engine.get_accumulations(latitude, longitude)
+    return {
+        "location": {"latitude": latitude, "longitude": longitude},
+        "nearest_road": {
+            "road_id": nearest["road_id"],
+            "name": nearest["name"],
+            "distance_km": round(distance_km([latitude, longitude], nearest["coords"][len(nearest["coords"]) // 2]), 2),
+        },
+        "risk_level": nearest["risk_level"],
+        "risk_score": nearest["risk_score"],
+        "predicted_depth_cm": nearest["predicted_depth_cm"],
+        "depth_range_cm": [nearest["depth_lower_cm"], nearest["depth_upper_cm"]],
+        "flood_probability_pct": nearest["flood_probability_pct"],
+        "confidence_pct": nearest["confidence_pct"],
+        "time_to_flood_min": nearest["time_to_flood_min"],
+        "hazard": hazard_context,
+        "rainfall": {"rain_3h": rainfall["rain_3h"], "rain_24h": rainfall["rain_24h"], "status": rainfall["status"]},
+        "recommended_action": "Use FLOOD-X safe routing and dispatch field response." if nearest["is_closed"] else "Monitor this location and verify drainage conditions.",
+        "source": "FLOOD-X nearest monitored road + hazard and rainfall context",
+    }
 def get_rainfall_forecast(
     t: int = Query(60, ge=0, le=180),
     scenario_mm: float = Query(85.0, ge=10.0, le=250.0)
@@ -1323,10 +1367,13 @@ def get_observation_fusion(
 def upload_custom_dataset(payload: CustomUploadPayload):
     """Processes the JSON MVP upload payload for direct callers and tests."""
     filename = payload.dataset_name if payload.dataset_name.endswith((".csv", ".json", ".geojson")) else f"{payload.dataset_name}.csv"
+    metadata = {"dataset_name": payload.dataset_name, "data_type": payload.data_type, "source": payload.source}
+    if payload.user_location:
+        metadata["user_location"] = payload.user_location
     return upload_service.process_upload(
         file_content=payload.file_content,
         filename=filename,
-        metadata={"dataset_name": payload.dataset_name, "data_type": payload.data_type, "source": payload.source}
+        metadata=metadata
     )
 
 @app.post("/api/upload/data")
@@ -1342,14 +1389,28 @@ async def upload_custom_dataset_endpoint(request: Request):
         dataset_name = str(form.get("dataset_name") or uploaded_file.filename or "Uploaded Dataset")
         data_type = str(form.get("data_type") or "drainage")
         source = str(form.get("source") or "User Upload")
+        location_lat = form.get("location_lat")
+        location_lon = form.get("location_lon")
+        location_label = str(form.get("location_label") or "")
         filename = uploaded_file.filename or dataset_name
     else:
         return upload_custom_dataset(CustomUploadPayload(**(await request.json())))
 
+    metadata = {"dataset_name": dataset_name, "data_type": data_type, "source": source}
+    if location_lat is not None and location_lon is not None:
+        try:
+            metadata["user_location"] = {
+                "latitude": float(location_lat),
+                "longitude": float(location_lon),
+                "label": location_label or "Browser current location",
+            }
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="Upload location must contain valid latitude and longitude")
+
     return upload_service.process_upload(
         file_content=file_content,
         filename=filename,
-        metadata={"dataset_name": dataset_name, "data_type": data_type, "source": source}
+        metadata=metadata
     )
 
 @app.get("/api/upload/validate/{upload_id}")

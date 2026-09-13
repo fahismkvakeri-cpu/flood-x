@@ -55,6 +55,9 @@ def initialize_database() -> None:
             );
             """
         )
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(user_layers)").fetchall()}
+        if "user_location_json" not in columns:
+            connection.execute("ALTER TABLE user_layers ADD COLUMN user_location_json TEXT")
 
 
 def insert_report(report: Dict[str, Any]) -> None:
@@ -132,13 +135,13 @@ def save_layer(layer: Dict[str, Any]) -> None:
         connection.execute(
             """
             INSERT OR REPLACE INTO user_layers
-            (id, name, data_type, source, feature_count, features_json, active, applied_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, name, data_type, source, feature_count, features_json, active, applied_at, user_location_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 layer["id"], layer["name"], layer["data_type"], layer["source"],
                 layer["feature_count"], json.dumps(layer["features"]), int(layer["active"]),
-                layer["applied_at"],
+                layer["applied_at"], json.dumps(layer.get("user_location")) if layer.get("user_location") else None,
             ),
         )
 
@@ -152,6 +155,7 @@ def list_layers() -> List[Dict[str, Any]]:
             "source": row["source"], "feature_count": row["feature_count"],
             "features": json.loads(row["features_json"]), "active": bool(row["active"]),
             "applied_at": row["applied_at"],
+            "user_location": json.loads(row["user_location_json"]) if row["user_location_json"] else None,
         }
         for row in rows
     ]
