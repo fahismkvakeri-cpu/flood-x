@@ -794,6 +794,50 @@ def get_flood_prediction_for_location(
         "timeline": timeline
     }
 
+
+@app.get("/api/flood/critical-locations")
+def get_critical_locations(
+    t: int = Query(60, ge=0, le=180),
+    rain_mm: float = Query(85.0, ge=10.0, le=250.0),
+    blockage_pct: float = Query(0.0, ge=0.0, le=95.0),
+    limit: int = Query(5, ge=1, le=10),
+):
+    """Ranks monitored locations requiring the earliest flood response."""
+    flood_state = flood_ml_model.predict_all(t, rain_mm, blockage_pct)
+    ranked = sorted(
+        flood_state["roads"],
+        key=lambda road: (
+            road["risk_score_norm"],
+            road["predicted_depth_cm"],
+            -(road["time_to_flood_min"] or 999),
+        ),
+        reverse=True,
+    )
+    locations = []
+    for rank, road in enumerate(ranked[:limit], start=1):
+        locations.append({
+            "rank": rank,
+            "road_id": road["road_id"],
+            "name": road["name"],
+            "coords": road["coords"][len(road["coords"]) // 2],
+            "risk_level": road["risk_level"],
+            "risk_score": road["risk_score"],
+            "predicted_depth_cm": road["predicted_depth_cm"],
+            "depth_lower_cm": road["depth_lower_cm"],
+            "depth_upper_cm": road["depth_upper_cm"],
+            "time_to_flood_min": road["time_to_flood_min"],
+            "flood_probability_pct": road["flood_probability_pct"],
+            "confidence_pct": road["confidence_pct"],
+            "is_closed": road["is_closed"],
+            "top_factor": road["top_factor"],
+            "plain_reason": road["plain_reason"],
+        })
+    return {
+        "forecast_horizon_min": t,
+        "scenario": {"rainfall_mm": rain_mm, "blockage_pct": blockage_pct},
+        "locations": locations,
+    }
+
 @app.get("/api/flood/explain/{location_id}")
 def get_flood_explanation(
     location_id: str,

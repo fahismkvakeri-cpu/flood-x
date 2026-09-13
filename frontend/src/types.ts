@@ -114,6 +114,30 @@ export interface FloodPredictResponse {
   timeline_projections: Record<string, { horizon_min: number; depth_cm: number; risk_score_norm: number; risk_score: number; risk_level: string; risk_category: string }[]>;
 }
 
+export interface CriticalLocation {
+  rank: number;
+  road_id: string;
+  name: string;
+  coords: [number, number];
+  risk_level: 'Low' | 'Medium' | 'High' | 'Critical';
+  risk_score: number;
+  predicted_depth_cm: number;
+  depth_lower_cm: number;
+  depth_upper_cm: number;
+  time_to_flood_min: number | null;
+  flood_probability_pct: number;
+  confidence_pct: number;
+  is_closed: boolean;
+  top_factor: string;
+  plain_reason: string;
+}
+
+export interface CriticalLocationsResponse {
+  forecast_horizon_min: number;
+  scenario: { rainfall_mm: number; blockage_pct: number };
+  locations: CriticalLocation[];
+}
+
 export interface RouteSummary {
   path_nodes: string[];
   total_distance_km: number;

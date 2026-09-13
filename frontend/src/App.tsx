@@ -11,6 +11,7 @@ import { CitizenReportModal } from './components/CitizenReportModal';
 import { DataUploadModal } from './components/DataUploadModal';
 import { PredictionComparisonCard } from './components/PredictionComparisonCard';
 import { ResponsePlanner } from './components/ResponsePlanner';
+import { CriticalLocationPredictor } from './components/CriticalLocationPredictor';
 import {
   FloodPredictResponse,
   RoadPrediction,
@@ -23,6 +24,7 @@ import {
   ResponsePlanResponse,
   InterventionImpactResponse,
   ObservationFusionResponse,
+  CriticalLocationsResponse,
   UserLayer,
   IndiaRiskPoint,
   PlaceDetail,
@@ -57,6 +59,7 @@ export const App: React.FC = () => {
   const [responsePlan, setResponsePlan] = useState<ResponsePlanResponse | null>(null);
   const [interventionImpact, setInterventionImpact] = useState<InterventionImpactResponse | null>(null);
   const [observationFusion, setObservationFusion] = useState<ObservationFusionResponse | null>(null);
+  const [criticalLocations, setCriticalLocations] = useState<CriticalLocationsResponse | null>(null);
 
   const [predictData, setPredictData] = useState<FloodPredictResponse | null>(null);
   const [routeData, setRouteData] = useState<RouteCalculationResponse | null>(null);
@@ -191,6 +194,15 @@ export const App: React.FC = () => {
     }
   };
 
+  const fetchCriticalLocations = async () => {
+    try {
+      const res = await fetch(`/api/flood/critical-locations?t=${horizonMin}&rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}&limit=5`);
+      if (res.ok) setCriticalLocations(await res.json());
+    } catch (err) {
+      console.error('Error fetching critical locations:', err);
+    }
+  };
+
   const evaluateIntervention = async (interventionType: string) => {
     try {
       const res = await fetch('/api/simulation/intervention', {
@@ -286,6 +298,7 @@ export const App: React.FC = () => {
       fetchEvacuationSummary(),
       fetchOperationsSummary(),
       fetchResponsePlan(),
+      fetchCriticalLocations(),
       fetchAlerts(),
       fetchReports(),
       fetchLayers(),
@@ -670,6 +683,7 @@ export const App: React.FC = () => {
                     routeDestination={routeDestination}
                     routePickMode={routePickMode}
                     routeError={routeError}
+                    routeData={routeData}
                     onStartPicking={(mode) => setRoutePickMode(mode)}
                     onRecalculateRoute={fetchRoute}
                   />
@@ -757,7 +771,21 @@ export const App: React.FC = () => {
                 />
               )}
 
-              {sidebarTab === 'response' && responsePlan && <ResponsePlanner plan={responsePlan} />}
+              {sidebarTab === 'response' && (
+                <>
+                  {criticalLocations && (
+                    <CriticalLocationPredictor
+                      data={criticalLocations}
+                      onSelectLocation={(location) => {
+                        const road = predictData?.roads.find((candidate) => candidate.road_id === location.road_id);
+                        if (road) setSelectedRoad(road);
+                        setFlyToCoords(location.coords);
+                      }}
+                    />
+                  )}
+                  {responsePlan && <ResponsePlanner plan={responsePlan} />}
+                </>
+              )}
 
               {sidebarTab === 'layers' && (
                 <div className="space-y-3">

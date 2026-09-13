@@ -17,6 +17,7 @@ from app.main import (
     get_population_exposure,
     get_evacuation_summary,
     get_active_alerts,
+    get_critical_locations,
     get_observation_fusion,
     update_alert_workflow,
     AlertWorkflowRequest,
@@ -109,6 +110,8 @@ def test_blueprint_apis():
     ))
     assert route_res["normal_route"] is not None
     assert route_res["recommended_route"] is not None
+    assert route_res["vehicle_profile"]["name"] == "Ambulance"
+    assert route_res["vehicle_profile"]["wading_depth_limit_cm"] == 25.0
     assert route_res["summary"]["flooded_segments_avoided"] >= 1
     print(f"[PASS] /api/route passed: Normal route depth = {route_res['normal_route']['max_depth_cm']} cm, Safe route avoided {route_res['summary']['flooded_segments_avoided']} flooded segments")
 
@@ -141,6 +144,13 @@ def test_blueprint_apis():
     refreshed = next(alert for alert in refreshed_alerts["alerts"] if alert["id"] == alert_id)
     assert refreshed["workflow_status"] == "ACKNOWLEDGED"
     print(f"[PASS] /api/alerts/workflow passed: {alert_id} acknowledged")
+
+    print("\n--- 7g. Testing Critical Location Predictor ---")
+    critical_locations = get_critical_locations(t=90, rain_mm=120.0, blockage_pct=40.0, limit=5)
+    assert len(critical_locations["locations"]) == 5
+    assert critical_locations["locations"][0]["risk_score"] >= critical_locations["locations"][-1]["risk_score"]
+    assert critical_locations["locations"][0]["depth_lower_cm"] <= critical_locations["locations"][0]["predicted_depth_cm"]
+    print(f"[PASS] /api/flood/critical-locations passed: top = {critical_locations['locations'][0]['name']}")
 
     print("\n--- 7c. Testing AI Response Planner ---")
     response_plan = get_response_plan(t=90, rain_mm=120.0, blockage_pct=40.0)
