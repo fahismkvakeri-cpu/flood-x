@@ -18,6 +18,8 @@ from app.main import (
     get_evacuation_summary,
     get_active_alerts,
     get_critical_locations,
+    analyze_drawn_area,
+    AreaAnalysisRequest,
     get_observation_fusion,
     update_alert_workflow,
     AlertWorkflowRequest,
@@ -151,6 +153,18 @@ def test_blueprint_apis():
     assert critical_locations["locations"][0]["risk_score"] >= critical_locations["locations"][-1]["risk_score"]
     assert critical_locations["locations"][0]["depth_lower_cm"] <= critical_locations["locations"][0]["predicted_depth_cm"]
     print(f"[PASS] /api/flood/critical-locations passed: top = {critical_locations['locations'][0]['name']}")
+
+    print("\n--- 7h. Testing Drawn Area Analysis ---")
+    area = analyze_drawn_area(AreaAnalysisRequest(
+        polygon=[[19.066, 72.873], [19.075, 72.873], [19.075, 72.884], [19.066, 72.884]],
+        forecast_horizon_min=90,
+        rainfall_scenario_mm=120.0,
+        blockage_percent=40.0,
+    ))
+    assert area["status"] == "ANALYZED"
+    assert area["roads_in_area"] > 0
+    assert "exposure" in area and "bhuvan_hazard" in area
+    print(f"[PASS] /api/analysis/area passed: {area['roads_in_area']} roads analyzed")
 
     print("\n--- 7c. Testing AI Response Planner ---")
     response_plan = get_response_plan(t=90, rain_mm=120.0, blockage_pct=40.0)

@@ -4,9 +4,12 @@ Implements the Section 8 Standardized Baseline Flood-Risk Model and feature weig
 import math
 from typing import Dict, List, Any
 from ..config import BASELINE_WEIGHTS, RISK_LEVELS_NORM, RISK_LEVELS
+from ..data.bhuvan_hazard import classify_point
 from ..data.pilot_dataset import ROADS
-from .rainfall_nowcast import nowcast_engine
 from .drainage_digital_twin import drainage_twin
+from .gpm_imerg import gpm_imerg_engine
+from .historical_flood_model import historical_flood_model
+from .rainfall_nowcast import nowcast_engine
 
 class FloodMLModel:
     def __init__(self):
@@ -18,7 +21,8 @@ class FloodMLModel:
         t_minutes: int,
         rainfall_scenario_mm: float,
         blockage_pct: float,
-        drain_sim_result: Dict[str, Any]
+        drain_sim_result: Dict[str, Any],
+        gpm_features: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """Calculates street-level flood depth, Section 8 baseline risk score, and XAI feature contributions."""
         # 1. Local rainfall nowcast at road coordinate
@@ -114,9 +118,20 @@ class FloodMLModel:
         time_progression = min(1.0, 0.25 + (t_minutes / 90.0) * 0.85)
         predicted_depth_cm = round(max(0.0, raw_depth * time_progression), 1)
 
-        # Flood Probability (Sigmoid-calibrated)
+        midpoint = road["coords"][len(road["coords"]) // 2]
+        bhuvan = classify_point(midpoint[0], midpoint[1])
+        norm_risk = round(min(1.0, max(0.0, norm_risk + bhuvan["prior_boost"])), 3)
+
+        # Flood Probability (Sigmoid-calibrated baseline, then fused with trained RF)
         z = (norm_risk - 0.45) * 8.0
-        flood_prob_pct = round(100.0 / (1.0 + math.exp(-max(-6.0, min(6.0, z)))), 1)
+        baseline_flood_prob_pct = round(100.0 / (1.0 + math.exp(-max(-6.0, min(6.0, z)))), 1)
+        ml_features = historical_flood_model.features_from_road(
+            road, accumulated_rain, estimated_water_level, rain_3h=gpm_features.get("rain_3h") if gpm_features else None
+        )
+        ml_result = historical_flood_model.predict_probability(ml_features)
+        ml_flood_prob_pct = ml_result["ml_flood_probability_pct"] if ml_result else baseline_flood_prob_pct
+        flood_prob_pct = round((baseline_flood_prob_pct * 0.55) + (ml_flood_prob_pct * 0.45), 1)
+        agreement_pct = round(max(0.0, 100.0 - abs(baseline_flood_prob_pct - ml_flood_prob_pct)), 1)
 
         # Time to Flood (minutes)
         if predicted_depth_cm >= 15.0:
@@ -196,7 +211,14 @@ class FloodMLModel:
             "is_closed": predicted_depth_cm >= 25.0 or norm_risk >= 0.80,
             "explainability": feature_percentages,
             "top_factor": top_factor,
-            "plain_reason": plain_reason
+            "plain_reason": plain_reason,
+            "baseline_flood_probability_pct": baseline_flood_prob_pct,
+            "ml_flood_probability_pct": ml_flood_prob_pct,
+            "model_agreement_pct": agreement_pct,
+            "ml_backend": ml_result["model_backend"] if ml_result else "baseline_only",
+            "ml_top_features": ml_result["top_ml_features"] if ml_result else [],
+            "bhuvan_hazard_class": bhuvan["hazard_class"],
+            "bhuvan_zone_name": bhuvan["zone_name"],
         }
 
     def predict_all(
@@ -208,11 +230,20 @@ class FloodMLModel:
         """Runs Section 8 baseline predictions across all mapped streets in the pilot area."""
         nowcast = nowcast_engine.get_nowcast(t_minutes, rainfall_scenario_mm)
         drain_sim = drainage_twin.simulate(nowcast["avg_intensity_mm_hr"], blockage_pct)
+        gpm_features = gpm_imerg_engine.get_accumulations()
+        nowcast["gpm_imerg"] = {
+            "rain_30m": gpm_features["rain_30m"],
+            "rain_1h": gpm_features["rain_1h"],
+            "rain_3h": gpm_features["rain_3h"],
+            "rain_6h": gpm_features["rain_6h"],
+            "rain_24h": gpm_features["rain_24h"],
+            "status": gpm_features["status"],
+        }
 
         road_predictions: List[Dict[str, Any]] = []
         for r in ROADS:
             pred = self.predict_for_road(
-                r, t_minutes, rainfall_scenario_mm, blockage_pct, drain_sim
+                r, t_minutes, rainfall_scenario_mm, blockage_pct, drain_sim, gpm_features
             )
             road_predictions.append(pred)
 

@@ -138,6 +138,25 @@ export interface CriticalLocationsResponse {
   locations: CriticalLocation[];
 }
 
+export interface AreaAnalysisResponse {
+  status: string;
+  centroid: [number, number];
+  polygon: [number, number][];
+  forecast_horizon_min: number;
+  scenario: { rainfall_mm: number; blockage_pct: number };
+  roads_in_area: number;
+  critical_roads: number;
+  max_predicted_depth_cm: number;
+  baseline_flood_probability_pct: number;
+  ml_flood_probability_pct: number;
+  bhuvan_hazard: { hazard_class: string; zone_name: string; source: string };
+  gpm_imerg: { rain_3h: number; rain_24h: number; status: string; source?: string };
+  exposure: { total_exposed_population: number; exposure_percentage: number; evacuation_priority: string };
+  ml_model: { ready: boolean; backend: string; ml_accuracy?: number; baseline_accuracy?: number };
+  top_roads: RoadPrediction[];
+  summary: string;
+}
+
 export interface RouteSummary {
   path_nodes: string[];
   total_distance_km: number;

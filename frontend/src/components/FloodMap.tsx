@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Pentagon } from 'lucide-react';
 import { RoadPrediction, RouteCalculationResponse, DrainageSimulation, CitizenReport, IndiaRiskPoint, PlaceDetail, AlertItem } from '../types';
 
 interface FloodMapProps {
@@ -31,8 +31,14 @@ interface FloodMapProps {
   onSelectRiskPoint: (point: IndiaRiskPoint) => void;
   routePickMode: 'origin' | 'destination' | null;
   onSelectMapLocation: (coords: [number, number]) => void;
+  onAddAoiPoint: (coords: [number, number]) => void;
   alerts: AlertItem[];
   onSelectAlert: (alert: AlertItem) => void;
+  aoiPolygon: [number, number][];
+  aoiDrawing: boolean;
+  onToggleAoiDrawing: () => void;
+  onAnalyzeAoi: () => void;
+  onClearAoi: () => void;
 }
 
 export const FloodMap: React.FC<FloodMapProps> = ({
@@ -63,8 +69,14 @@ export const FloodMap: React.FC<FloodMapProps> = ({
   onSelectRiskPoint,
   routePickMode,
   onSelectMapLocation,
+  onAddAoiPoint,
   alerts,
   onSelectAlert,
+  aoiPolygon,
+  aoiDrawing,
+  onToggleAoiDrawing,
+  onAnalyzeAoi,
+  onClearAoi,
 }) => {
   const [showRiskPoints, setShowRiskPoints] = useState(true);
   const [showNormalRoute, setShowNormalRoute] = useState(true);
@@ -168,13 +180,37 @@ export const FloodMap: React.FC<FloodMapProps> = ({
     const handleMapClick = (event: L.LeafletMouseEvent) => {
       if (routePickMode) {
         onSelectMapLocation([event.latlng.lat, event.latlng.lng]);
+      } else if (aoiDrawing) {
+        onAddAoiPoint([event.latlng.lat, event.latlng.lng]);
       }
     };
     map.on('click', handleMapClick);
     return () => {
       map.off('click', handleMapClick);
     };
-  }, [onSelectMapLocation, routePickMode]);
+  }, [onSelectMapLocation, onAddAoiPoint, routePickMode, aoiDrawing]);
+
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    const layer = L.layerGroup().addTo(mapInstanceRef.current);
+    if (aoiPolygon.length >= 2) {
+      L.polyline(aoiPolygon, { color: '#22d3ee', weight: 3, dashArray: '8, 6' }).addTo(layer);
+      aoiPolygon.forEach((point, index) => L.circleMarker(point, { radius: index === 0 ? 6 : 4, color: '#fff', fillColor: '#06b6d4', fillOpacity: 1, weight: 2 }).addTo(layer));
+      if (aoiPolygon.length >= 3) L.polygon(aoiPolygon, { color: '#22d3ee', fillColor: '#0891b2', fillOpacity: 0.12, weight: 1 }).addTo(layer);
+    }
+    return () => { layer.remove(); };
+  }, [aoiPolygon]);
+
+  const handleAoiSurfacePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (!aoiDrawing || !mapInstanceRef.current || !mapContainerRef.current) return;
+    const bounds = mapContainerRef.current.getBoundingClientRect();
+    const point = mapInstanceRef.current.containerPointToLatLng([
+      event.clientX - bounds.left,
+      event.clientY - bounds.top,
+    ]);
+    onAddAoiPoint([point.lat, point.lng]);
+  };
 
   useEffect(() => {
     if (!mapInstanceRef.current) return;
@@ -568,6 +604,24 @@ export const FloodMap: React.FC<FloodMapProps> = ({
         <div className="font-bold text-cyan-300">India-wide flood overview</div>
         <div className="text-[10px] text-slate-400">Select a city or search any Indian place for local context</div>
       </div>
+
+      <div className="absolute top-28 left-4 z-[1000] flex flex-wrap gap-2">
+        <button type="button" onClick={onToggleAoiDrawing} className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-lg backdrop-blur ${aoiDrawing ? 'border-cyan-300 bg-cyan-500/30 text-cyan-100' : 'border-cyan-500/50 bg-slate-950/85 text-cyan-300'}`}>
+          <Pentagon className="h-3.5 w-3.5" /> {aoiDrawing ? 'Click map to draw' : 'Draw area'}
+        </button>
+        {aoiPolygon.length >= 3 && <button type="button" onClick={onAnalyzeAoi} className="rounded-lg border border-emerald-400/50 bg-emerald-900/80 px-3 py-1.5 text-xs font-bold text-emerald-100 shadow-lg">Analyze area</button>}
+        {aoiPolygon.length > 0 && <button type="button" onClick={onClearAoi} className="rounded-lg border border-slate-600 bg-slate-950/85 px-3 py-1.5 text-xs font-semibold text-slate-300 shadow-lg">Clear</button>}
+      </div>
+
+      {aoiDrawing && <div className="absolute left-1/2 top-4 z-[1000] -translate-x-1/2 rounded-lg border border-cyan-400/50 bg-slate-950/90 px-3 py-2 text-xs font-semibold text-cyan-200 shadow-xl">Click at least 3 points, then analyze · {aoiPolygon.length} point(s)</div>}
+
+      {aoiDrawing && (
+        <div
+          className="absolute inset-0 z-[900] cursor-crosshair"
+          onPointerDown={handleAoiSurfacePointerDown}
+          aria-label="AOI drawing surface"
+        />
+      )}
 
       {/* Layer Control Pills (Top Right) */}
       <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2">

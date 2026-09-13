@@ -12,6 +12,7 @@ import { DataUploadModal } from './components/DataUploadModal';
 import { PredictionComparisonCard } from './components/PredictionComparisonCard';
 import { ResponsePlanner } from './components/ResponsePlanner';
 import { CriticalLocationPredictor } from './components/CriticalLocationPredictor';
+import { AreaAnalysisPanel } from './components/AreaAnalysisPanel';
 import {
   FloodPredictResponse,
   RoadPrediction,
@@ -25,6 +26,7 @@ import {
   InterventionImpactResponse,
   ObservationFusionResponse,
   CriticalLocationsResponse,
+  AreaAnalysisResponse,
   UserLayer,
   IndiaRiskPoint,
   PlaceDetail,
@@ -60,6 +62,9 @@ export const App: React.FC = () => {
   const [interventionImpact, setInterventionImpact] = useState<InterventionImpactResponse | null>(null);
   const [observationFusion, setObservationFusion] = useState<ObservationFusionResponse | null>(null);
   const [criticalLocations, setCriticalLocations] = useState<CriticalLocationsResponse | null>(null);
+  const [aoiPolygon, setAoiPolygon] = useState<[number, number][]>([]);
+  const [aoiDrawing, setAoiDrawing] = useState(false);
+  const [areaAnalysis, setAreaAnalysis] = useState<AreaAnalysisResponse | null>(null);
 
   const [predictData, setPredictData] = useState<FloodPredictResponse | null>(null);
   const [routeData, setRouteData] = useState<RouteCalculationResponse | null>(null);
@@ -200,6 +205,23 @@ export const App: React.FC = () => {
       if (res.ok) setCriticalLocations(await res.json());
     } catch (err) {
       console.error('Error fetching critical locations:', err);
+    }
+  };
+
+  const analyzeAoi = async () => {
+    if (aoiPolygon.length < 3) return;
+    try {
+      const res = await fetch('/api/analysis/area', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ polygon: aoiPolygon, forecast_horizon_min: horizonMin, rainfall_scenario_mm: rainScenarioMm, blockage_percent: blockagePct }),
+      });
+      if (res.ok) {
+        setAreaAnalysis(await res.json());
+        setAoiDrawing(false);
+      }
+    } catch (err) {
+      console.error('Error analyzing drawn area:', err);
     }
   };
 
@@ -530,8 +552,17 @@ export const App: React.FC = () => {
               onSelectRiskPoint={setSelectedRiskPoint}
               routePickMode={routePickMode}
               onSelectMapLocation={handleSelectMapLocation}
+              onAddAoiPoint={(coords) => {
+                setAreaAnalysis(null);
+                setAoiPolygon((current) => [...current, coords]);
+              }}
               alerts={alerts}
               onSelectAlert={handleSelectAlert}
+              aoiPolygon={aoiPolygon}
+              aoiDrawing={aoiDrawing}
+              onToggleAoiDrawing={() => { setAoiDrawing((drawing) => !drawing); setAreaAnalysis(null); }}
+              onAnalyzeAoi={analyzeAoi}
+              onClearAoi={() => { setAoiPolygon([]); setAreaAnalysis(null); setAoiDrawing(false); }}
             />
 
           ) : (
@@ -582,6 +613,8 @@ export const App: React.FC = () => {
               </p>
             </div>
           )}
+
+          {areaAnalysis && <AreaAnalysisPanel analysis={areaAnalysis} onClose={() => setAreaAnalysis(null)} />}
 
           {mapStatus && (
             <div className="pointer-events-none absolute bottom-24 left-4 z-40 max-w-sm rounded-lg border border-amber-400/40 bg-slate-950/90 px-3 py-2 text-xs text-amber-200 shadow-xl">

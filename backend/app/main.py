@@ -28,6 +28,10 @@ from .engine.flood_ml_model import flood_ml_model
 from .engine.emergency_routing import emergency_router
 from .engine.exposure_engine import exposure_engine
 from .engine.upload_service import upload_service
+from .engine.gpm_imerg import gpm_imerg_engine
+from .engine.historical_flood_model import historical_flood_model
+from .engine.area_analysis import analyze_area
+from .data.bhuvan_hazard import as_geojson as bhuvan_hazard_geojson
 from .database import get_upload
 
 INDIA_RISK_CITIES = [
@@ -513,6 +517,9 @@ class AlertWorkflowRequest(BaseModel):
 class InterventionRequest(SimulationRequest):
     intervention_type: str = Field(default="CLEAR_DRAIN", description="CLEAR_DRAIN, ACTIVATE_PUMP, or TRAFFIC_CONTROL")
 
+class AreaAnalysisRequest(SimulationRequest):
+    polygon: List[List[float]] = Field(description="Closed or open ring of [lat, lon] vertices")
+
 class RouteRequest(BaseModel):
     origin_id: Optional[str] = "J_ASIAN_HEART"
     destination_id: Optional[str] = "J_BAIL_BAZAR"
@@ -555,6 +562,9 @@ def get_health():
         "uptime": "Operational",
         "data_sources": {
             "rainfall": {"source": "IMD Doppler Radar / AWS", "status": "CONNECTED", "latency_ms": 42},
+            "gpm_imerg": {"source": "NASA GPM IMERG-compatible historical accumulations", "status": "ONLINE"},
+            "bhuvan": {"source": "ISRO Bhuvan flood-hazard context", "status": "LOADED", "zones": 7},
+            "ml_model": historical_flood_model.status(),
             "terrain": {"source": "Copernicus DEM GLO-30", "status": "LOADED", "resolution": "30m"},
             "drainage": {"source": "Municipal Digital Twin Graph", "status": "ONLINE", "nodes": len(DRAIN_NODES)},
             "roads": {"source": "OpenStreetMap + Overpass API", "status": "LOADED", "edges": len(ROADS)},
@@ -703,7 +713,52 @@ def get_place_detail(
 
     return build_india_operational_layers(rain_mm=rain_mm, blockage_pct=blockage_pct)
 
-@app.get("/api/rainfall/forecast")
+@app.get("/api/rainfall/gpm-imerg")
+def get_gpm_imerg(
+    latitude: float = Query(None),
+    longitude: float = Query(None),
+):
+    """Historical GPM IMERG-style accumulations (section 19.3)."""
+    lat = latitude if latitude is not None else PILOT_ZONE["center"][0]
+    lon = longitude if longitude is not None else PILOT_ZONE["center"][1]
+    payload = gpm_imerg_engine.get_accumulations(lat, lon)
+    dataset = load_india_dataset()["records"]
+
+    def distance_km(first: List[float], second: List[float]) -> float:
+        return math.hypot((first[0] - second[0]) * 111.0, (first[1] - second[1]) * 111.0)
+
+    nearby = []
+    for record in dataset:
+        gap = distance_km([lat, lon], record["coords"])
+        if gap <= 80.0:
+            nearby.append({**record, "distance_km": round(gap, 2)})
+    nearby.sort(key=lambda item: item["distance_km"])
+    payload["joined_flood_observations"] = nearby[:8]
+    payload["join_method"] = "spatial match within 80 km against historical flood CSV"
+    return payload
+
+
+@app.get("/api/gis/bhuvan-hazard")
+def get_bhuvan_hazard():
+    """ISRO Bhuvan flood-hazard context layer (section 19.6)."""
+    return bhuvan_hazard_geojson()
+
+
+@app.get("/api/ml/status")
+def get_ml_status():
+    """Trained Random Forest status versus the section-8 baseline."""
+    return historical_flood_model.status()
+
+
+@app.post("/api/analysis/area")
+def analyze_drawn_area(req: AreaAnalysisRequest):
+    """Runs FLOOD-X for a user-drawn area of interest (section 27.1)."""
+    return analyze_area(
+        polygon=req.polygon,
+        t_minutes=req.forecast_horizon_min,
+        rain_mm=req.rainfall_scenario_mm,
+        blockage_pct=req.blockage_percent,
+    )
 def get_rainfall_forecast(
     t: int = Query(60, ge=0, le=180),
     scenario_mm: float = Query(85.0, ge=10.0, le=250.0)
