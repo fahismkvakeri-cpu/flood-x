@@ -75,17 +75,19 @@ export const DataUploadModal: React.FC<DataUploadModalProps> = ({
     try {
       const res = await fetch(`/api/upload/apply/${uploadStatus.upload_id}`, { method: 'POST' });
       if (res.ok) {
+        const appliedLayer = await res.json();
         setApplied(true);
         setTimeout(() => {
           onLayerApplied({
-            id: uploadStatus.upload_id,
-            name: datasetName,
-            data_type: dataType,
-            source: 'User Upload',
-            feature_count: uploadStatus.feature_count,
-            features: [],
+            id: appliedLayer.layer_id,
+            name: appliedLayer.name || datasetName,
+            data_type: appliedLayer.data_type || dataType,
+            source: appliedLayer.source || 'User Upload',
+            feature_count: appliedLayer.feature_count,
+            features: appliedLayer.features || [],
             active: true,
-            applied_at: new Date().toISOString()
+            applied_at: new Date().toISOString(),
+            user_location: appliedLayer.user_location || null,
           });
           onClose();
         }, 1200);

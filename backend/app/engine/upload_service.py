@@ -247,7 +247,12 @@ class UploadService:
             "status": "APPLIED",
             "message": f"Dataset '{layer['name']}' successfully applied to FLOOD-X digital twin.",
             "layer_id": layer["id"],
-            "feature_count": layer["feature_count"]
+            "feature_count": layer["feature_count"],
+            "name": layer["name"],
+            "data_type": layer["data_type"],
+            "source": layer["source"],
+            "features": layer["features"],
+            "user_location": layer.get("user_location"),
         }
 
     def get_user_layers(self) -> List[Dict[str, Any]]:
