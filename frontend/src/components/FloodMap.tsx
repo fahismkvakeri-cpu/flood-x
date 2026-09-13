@@ -1,12 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { ExternalLink, Pentagon } from 'lucide-react';
-import { RoadPrediction, RouteCalculationResponse, DrainageSimulation, CitizenReport, IndiaRiskPoint, PlaceDetail, AlertItem, UserLayer } from '../types';
+import { RoadPrediction, RouteCalculationResponse, DrainageSimulation, CitizenReport, IndiaRiskPoint, PlaceDetail, AlertItem } from '../types';
 
 interface FloodMapProps {
   roads: RoadPrediction[];
   drainage: DrainageSimulation | null;
-  userLayers: UserLayer[];
   citizenReports: CitizenReport[];
   selectedRoad: RoadPrediction | null;
   selectedReport: CitizenReport | null;
@@ -45,7 +44,6 @@ interface FloodMapProps {
 export const FloodMap: React.FC<FloodMapProps> = ({
   roads,
   drainage,
-  userLayers,
   citizenReports,
   selectedRoad,
   selectedReport,
@@ -116,7 +114,6 @@ export const FloodMap: React.FC<FloodMapProps> = ({
   const userLocLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const routeLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const operationalLayerGroupRef = useRef<L.LayerGroup | null>(null);
-  const userLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const alertLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const mapTileLayerRef = useRef<L.TileLayer | null>(null);
 
@@ -157,7 +154,6 @@ export const FloodMap: React.FC<FloodMapProps> = ({
     userLocLayerGroupRef.current = L.layerGroup().addTo(map);
     routeLayerGroupRef.current = L.layerGroup().addTo(map);
     operationalLayerGroupRef.current = L.layerGroup().addTo(map);
-    userLayerGroupRef.current = L.layerGroup().addTo(map);
     alertLayerGroupRef.current = L.layerGroup().addTo(map);
 
     mapInstanceRef.current = map;
@@ -292,45 +288,6 @@ export const FloodMap: React.FC<FloodMapProps> = ({
       });
     }
   }, [placeDetail, showFloodZones, showEmergencyAssets]);
-
-  useEffect(() => {
-    if (!userLayerGroupRef.current) return;
-    userLayerGroupRef.current.clearLayers();
-
-    const layerColors: Record<string, string> = {
-      drainage: '#f97316',
-      emergency_assets: '#a78bfa',
-      rainfall: '#38bdf8',
-      roads: '#facc15',
-    };
-
-    userLayers.filter((layer) => layer.active).forEach((layer) => {
-      const color = layerColors[layer.data_type] || '#fb7185';
-      layer.features.forEach((feature, index) => {
-        const coordinates = feature.coordinates;
-        if (!Array.isArray(coordinates)) return;
-        const properties = feature.properties || {};
-        const detail = Object.entries(properties).slice(0, 5).map(([key, value]) => `${key}: ${value}`).join('<br/>');
-        const label = `${layer.name} · record ${index + 1}${detail ? `<br/>${detail}` : ''}`;
-
-        if (feature.type === 'LineString' && Array.isArray(coordinates[0])) {
-          L.polyline(coordinates.map(([longitude, latitude]: [number, number]) => [latitude, longitude] as [number, number]), { color, weight: 4, opacity: 0.9, dashArray: '7, 5' })
-            .bindTooltip(label, { sticky: true })
-            .addTo(userLayerGroupRef.current!);
-          return;
-        }
-
-        if (typeof coordinates[0] === 'number' && typeof coordinates[1] === 'number') {
-          const point: [number, number] = coordinates[0] >= 68 && coordinates[0] <= 98 && coordinates[1] >= 6 && coordinates[1] <= 37
-            ? [coordinates[1], coordinates[0]]
-            : [coordinates[0], coordinates[1]];
-          L.circleMarker(point, { radius: 7, color: '#fff', weight: 2, fillColor: color, fillOpacity: 0.95 })
-            .bindTooltip(label, { sticky: true })
-            .addTo(userLayerGroupRef.current!);
-        }
-      });
-    });
-  }, [userLayers]);
 
   const openGoogleMapsRoute = () => {
     if (!routeData?.recommended_route) return;

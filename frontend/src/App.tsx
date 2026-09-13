@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
+import { KPISummary } from './components/KPISummary';
 import { FloodMap } from './components/FloodMap';
 import { TimelineControl } from './components/TimelineControl';
 import { StreetDetailPanel } from './components/StreetDetailPanel';
@@ -12,7 +13,6 @@ import { PredictionComparisonCard } from './components/PredictionComparisonCard'
 import { ResponsePlanner } from './components/ResponsePlanner';
 import { CriticalLocationPredictor } from './components/CriticalLocationPredictor';
 import { AreaAnalysisPanel } from './components/AreaAnalysisPanel';
-import { FloodDashboard } from './components/FloodDashboard';
 import { AppPage, MultiPageView } from './components/MultiPageView';
 import FloodHero from './components/ui/scroll-locked-video-hero';
 import {
@@ -21,6 +21,7 @@ import {
   RouteCalculationResponse,
   AlertItem,
   CitizenReport,
+  PopulationExposureResponse,
   EvacuationSummaryResponse,
   OperationsSummaryResponse,
   ResponsePlanResponse,
@@ -61,6 +62,7 @@ export const App: React.FC = () => {
   const [citizenReports, setCitizenReports] = useState<CitizenReport[]>([]);
   const [selectedReport, setSelectedReport] = useState<CitizenReport | null>(null);
   const [userLayers, setUserLayers] = useState<UserLayer[]>([]);
+  const [exposureData, setExposureData] = useState<PopulationExposureResponse | null>(null);
   const [evacuationData, setEvacuationData] = useState<EvacuationSummaryResponse | null>(null);
   const [operationsData, setOperationsData] = useState<OperationsSummaryResponse | null>(null);
   const [responsePlan, setResponsePlan] = useState<ResponsePlanResponse | null>(null);
@@ -86,8 +88,6 @@ export const App: React.FC = () => {
   const [showEmergencyAssets, setShowEmergencyAssets] = useState<boolean>(true);
   const [placeDetail, setPlaceDetail] = useState<PlaceDetail | null>(null);
   const [selectedRiskPoint, setSelectedRiskPoint] = useState<IndiaRiskPoint | null>(null);
-  const [forecastTimeline, setForecastTimeline] = useState<Array<{ horizon_min: number; avg_intensity_mm_hr: number; accumulated_mm: number; confidence_pct: number }>>([]);
-  const [historicalRainfall, setHistoricalRainfall] = useState<{ status?: string; hours?: number[]; latest_timestamp?: string | null; joined_flood_observations?: Array<{ rainfall_mm?: number; flood_occurred?: number; water_level_m?: number; river_discharge_m3s?: number; latitude?: number; longitude?: number }> } | null>(null);
 
   const navigateToPage = (page: string) => {
     const nextPage = page as AppPage;
@@ -167,6 +167,21 @@ export const App: React.FC = () => {
       setRouteError('Route service is unavailable. Start the backend and try again.');
     } finally {
       if (requestId === routeRequestRef.current) setRouteLoading(false);
+    }
+  };
+
+  // Fetch population exposure (Section 19.7)
+  const fetchExposure = async () => {
+    try {
+      const res = await fetch(
+        `/api/exposure?t=${horizonMin}&rain_mm=${rainScenarioMm}&blockage_pct=${blockagePct}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setExposureData(data);
+      }
+    } catch (err) {
+      console.error('Error fetching population exposure:', err);
     }
   };
 
@@ -320,23 +335,11 @@ export const App: React.FC = () => {
     }
   };
 
-  const fetchDashboardData = async () => {
-    try {
-      const [forecastResponse, historicalResponse] = await Promise.all([
-        fetch('/api/forecast'),
-        fetch('/api/rainfall/gpm-imerg'),
-      ]);
-      if (forecastResponse.ok) setForecastTimeline((await forecastResponse.json()).timeline || []);
-      if (historicalResponse.ok) setHistoricalRainfall(await historicalResponse.json());
-    } catch (err) {
-      console.error('Error fetching dashboard history and forecast:', err);
-    }
-  };
-
   useEffect(() => {
     Promise.all([
       fetchPredictions(),
       fetchRoute(),
+      fetchExposure(),
       fetchEvacuationSummary(),
       fetchOperationsSummary(),
       fetchResponsePlan(),
@@ -346,7 +349,6 @@ export const App: React.FC = () => {
       fetchLayers(),
       fetchIndiaOverview(),
       fetchPlaceDetail(),
-      fetchDashboardData(),
     ]);
   }, [horizonMin, rainScenarioMm, blockagePct, selectedVehicle, routeOrigin, routeDestination]);
 
@@ -595,26 +597,24 @@ export const App: React.FC = () => {
         </div>
       </div>
 
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        {predictData && (
-          <FloodDashboard
-            predictData={predictData}
-            forecast={forecastTimeline}
-            historical={historicalRainfall}
-            kpis={predictData.kpis}
-            onOpenMap={() => document.getElementById('live-map')?.scrollIntoView({ behavior: 'smooth' })}
-          />
-        )}
+      {/* Main KPI Row with WorldPop Exposure (Section 19.7) */}
+      {predictData && (
+        <KPISummary
+          kpis={predictData.kpis}
+          avgRainfall={predictData.nowcast.avg_intensity_mm_hr}
+          confidencePct={predictData.nowcast.confidence_pct}
+          exposureData={exposureData}
+        />
+      )}
 
-        {/* Center Layout: Map + Side Control Panels */}
-        <div id="live-map" className="flex min-h-[720px] flex-col lg:h-[calc(100vh-12rem)] lg:min-h-[680px] lg:flex-row relative overflow-hidden">
+      {/* Center Layout: Map + Side Control Panels */}
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row relative overflow-y-auto overflow-x-hidden">
         {/* Interactive GIS Map Area */}
         <div className="flex-1 min-w-0 min-h-[560px] lg:min-h-0 flex flex-col relative h-[62vh] lg:h-full">
           {predictData ? (
             <FloodMap
               roads={predictData.roads}
               drainage={predictData.drainage}
-              userLayers={userLayers}
               citizenReports={citizenReports}
               selectedRoad={selectedRoad}
               selectedReport={selectedReport}
@@ -970,8 +970,7 @@ export const App: React.FC = () => {
             </div>
           </div>
         )}
-        </div>
-      </main>
+      </div>
 
       {/* Modals (Section 27) */}
       <CitizenReportModal
